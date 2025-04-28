@@ -1,6 +1,6 @@
-# QSAR Toolbox Assistant
+# QSAR Toolbox MultiAgent Assisstant
 
-A streamlined chemical analysis application that interfaces with the QSAR Toolbox API to provide chemical property analysis, profiling, and hazard assessment.
+A streamlined chemical analysis platform that integrates the QSAR Toolbox API with an advanced multi-agent AI system to provide comprehensive chemical characterization, hazard assessment, and read-across analysis.
 
 ## Features
 
@@ -9,17 +9,26 @@ A streamlined chemical analysis application that interfaces with the QSAR Toolbo
 - Experimental data retrieval
 - Chemical profiling analysis
 - Downloadable raw data in multiple formats (JSON, CSV)
-- **Agentic AI-powered analysis reports:** Utilizes a multi-agent system (Specialists + Synthesizer) powered by LangChain and OpenAI for comprehensive, context-aware report generation. Specialist agents analyze different data aspects (physical properties, environmental fate, profiling, experimental data) in parallel, and a synthesizer agent combines these analyses into a final report.
+- **Enhanced multi-agent AI analysis system:** Utilizes a coordinated team of specialist agents powered by LangChain and OpenAI:
+  - **Chemical Context Agent:** Establishes precise chemical identity at the start of analysis
+  - **Physical Properties Agent:** Analyzes molecular structure and physical characteristics
+  - **Environmental Fate Agent:** Evaluates persistence, bioaccumulation, and environmental mobility
+  - **Profiling/Reactivity Agent:** Assesses chemical reactivity patterns and toxicological alerts
+  - **Experimental Data Agent:** Interprets available experimental findings and identifies trends
+  - **Read-Across Agent:** Suggests suitable analogue chemicals and detailed read-across strategies
+  - **Synthesis Agent:** Integrates all specialist analyses into a comprehensive final report
 
 ## Architecture
 
-The application follows a multi-stage process:
+The application follows a sophisticated multi-stage process:
 
 1.  **Data Collection:** Retrieves chemical data (properties, experimental, profiling) sequentially from the QSAR Toolbox API.
-2.  **Parallel Agent Analysis:** Invokes multiple specialized LLM agents (via LangChain) concurrently using `asyncio`. Each agent analyzes a specific data subset (e.g., physical properties, environmental fate) based on the user's context.
-3.  **Report Synthesis:** A final LLM agent synthesizes the outputs from the specialist agents into a single, comprehensive report.
+2.  **Chemical Context Establishment:** Identifies and confirms the precise chemical identity being analyzed.
+3.  **Parallel Specialist Analysis:** Invokes multiple specialized LLM agents (via LangChain) concurrently using `asyncio`. Each agent analyzes a specific data subset based on the user's context.
+4.  **Read-Across Analysis:** Analyzes data gaps and suggests suitable chemical analogues with detailed strategy rationale.
+5.  **Report Synthesis:** A final LLM agent synthesizes all specialist outputs into a single, comprehensive report that preserves data precision and contextual relevance.
 
-This agentic approach allows for focused analysis by specialists and efficient parallel processing of LLM tasks.
+This enhanced agentic approach ensures accurate chemical identification, detailed analysis from multiple perspectives, and scientifically sound read-across suggestions.
 
 ## Project Structure
 

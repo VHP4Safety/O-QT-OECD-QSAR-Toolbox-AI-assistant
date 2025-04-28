@@ -15,13 +15,14 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 from utils.qsar_api import QSARToolboxAPI, QSARConnectionError, QSARTimeoutError, QSARResponseError
 # Import new agent functions
 from utils.llm_utils import (
+    analyze_chemical_context, # Added
     analyze_physical_properties,
     analyze_environmental_fate,
     analyze_profiling_reactivity,
     analyze_experimental_data,
+    analyze_read_across, # Added
     synthesize_report
 )
-# Removed commented out import for old functions
 from components.search import render_search_section
 from components.results import render_results_section, render_download_section # Keep render_download_section for raw data
 
@@ -110,13 +111,16 @@ def render_specialist_downloads(identifier: str):
         return
 
     specialist_names = [
+        "Chemical_Context", # Added
         "Physical_Properties",
         "Environmental_Fate",
         "Profiling_Reactivity",
-        "Experimental_Data"
+        "Experimental_Data",
+        "Read_Across" # Added
     ]
 
-    for i, name in enumerate(specialist_names):
+    # Use the names directly as keys
+    for name in specialist_names:
         report_content = st.session_state.specialist_outputs_dict.get(name)
         if report_content:
             filename = f"{identifier}_specialist_{name}.txt"
@@ -285,12 +289,20 @@ async def main():
                 if results:
                     st.session_state.analysis_results = results # Store raw results
 
-                    # --- Step 2: Parallel Specialist Agent Analysis ---
-                    update_progress(0.85, "🧠 Running specialist agents...")
-                    analysis_context = context if context else "General chemical hazard assessment"
+                    # --- Step 2: Chemical Context Agent ---
+                    update_progress(0.82, "🆔 Confirming Chemical Identity...")
+                    original_context = context if context else "General chemical hazard assessment"
+                    chemical_data_for_context = results.get('chemical_data', {})
+                    confirmed_identity_str = await analyze_chemical_context(chemical_data_for_context, original_context)
+                    # Prepend identity to context for other agents
+                    analysis_context = f"{confirmed_identity_str}\n\nUser Goal: {original_context}"
+                    st.session_state.specialist_outputs_dict = {"Chemical_Context": confirmed_identity_str} # Store context output
+
+                    # --- Step 3: Parallel Specialist Agent Analysis ---
+                    update_progress(0.85, "🧠 Running core specialist agents...")
 
                     # Prepare data slices for agents
-                    properties_data = results.get('chemical_data', {}).get('properties', {})
+                    properties_data = results.get('chemical_data', {}).get('properties', {}) # Already fetched
                     profiling_data = results.get('profiling', {})
                     experimental_data_list = results.get('experimental_data', [])
                     # Wrap experimental data list in a dict for consistent agent input type
@@ -304,31 +316,43 @@ async def main():
                     task_prof = asyncio.create_task(analyze_profiling_reactivity(profiling_data, analysis_context))
                     task_exp = asyncio.create_task(analyze_experimental_data(experimental_data_dict, analysis_context))
 
-                    # Run tasks concurrently - outputs should now be strings
-                    specialist_outputs_list: List[str] = await asyncio.gather(
+                    # Run core tasks concurrently - outputs should now be strings
+                    core_specialist_outputs_list: List[str] = await asyncio.gather(
                         task_phys,
                         task_env,
                         task_prof,
                         task_exp
                     )
 
-                    # Store individual string outputs in a dictionary for download
-                    # (Handle potential non-string error returns just in case)
-                    st.session_state.specialist_outputs_dict = {
-                        "Physical_Properties": str(specialist_outputs_list[0]),
-                        "Environmental_Fate": str(specialist_outputs_list[1]),
-                        "Profiling_Reactivity": str(specialist_outputs_list[2]),
-                        "Experimental_Data": str(specialist_outputs_list[3])
-                    }
+                    # Store core specialist outputs
+                    st.session_state.specialist_outputs_dict.update({
+                        "Physical_Properties": str(core_specialist_outputs_list[0]),
+                        "Environmental_Fate": str(core_specialist_outputs_list[1]),
+                        "Profiling_Reactivity": str(core_specialist_outputs_list[2]),
+                        "Experimental_Data": str(core_specialist_outputs_list[3])
+                    })
+
+                    # --- Step 4: Read Across Agent ---
+                    update_progress(0.90, "🧬 Analyzing Read-Across Potential...")
+                    # Pass full results, the core outputs, and the enhanced context
+                    read_across_report = await analyze_read_across(results, core_specialist_outputs_list, analysis_context)
+                    st.session_state.specialist_outputs_dict["Read_Across"] = read_across_report # Store read-across output
 
 
-                    # --- Step 3: Synthesize Report ---
-                    # synthesize_report now expects the list of strings directly
+                    # --- Step 5: Synthesize Final Report ---
                     update_progress(0.95, "✍️ Synthesizing final report...")
-                    final_report_content = await synthesize_report(specialist_outputs_list, analysis_context)
+                    # Pass the actual identifier, the core specialist outputs, the read-across report, and the original context
+                    final_report_content = await synthesize_report(
+                        chemical_identifier=identifier, # Use the actual input identifier
+                        specialist_outputs=core_specialist_outputs_list, # Only the core 4
+                        read_across_report=read_across_report,
+                        context=original_context # Use the original user context for the synthesizer's goal
+                    )
                     st.session_state.final_report = final_report_content
 
                     update_progress(1.0, "✅ Analysis complete!")
+
+                    # --- Step 6: Display Results ---
 
                     # --- Step 4: Display Results ---
                     identifier_display = identifier # Use the input identifier for display consistency
