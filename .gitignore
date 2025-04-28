@@ -51,3 +51,7 @@ Thumbs.db
 
 # Cleanup documentation
 cleanup_summary.md
+
+# Key files
+key
+key.pub
