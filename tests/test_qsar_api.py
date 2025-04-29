@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
+#
+# SPDX-License-Identifier: MIT
+
 # tests/test_qsar_api.py
 import pytest
 import requests # Need to import requests for the exception

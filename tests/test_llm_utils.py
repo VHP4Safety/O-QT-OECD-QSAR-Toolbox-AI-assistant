@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
+#
+# SPDX-License-Identifier: MIT
+
 # tests/test_llm_utils.py
 import pytest
 import asyncio

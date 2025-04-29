@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
+#
+# SPDX-License-Identifier: MIT
+
 # tests/test_app.py
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock

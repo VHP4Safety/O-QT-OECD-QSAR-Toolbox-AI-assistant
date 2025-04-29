@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
+#
+# SPDX-License-Identifier: MIT
+
 """
 Utility functions for LLM-based report generation using a multi-agent approach.
 """

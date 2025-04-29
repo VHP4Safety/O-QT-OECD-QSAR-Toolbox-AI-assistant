@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
+#
+# SPDX-License-Identifier: MIT
+
 import streamlit as st
 import pandas as pd
 import math

@@ -20,21 +20,21 @@ classifiers = [
     # "Framework :: Streamlit", # Removed invalid classifier
 ]
 dependencies = [
-    "streamlit",
-    "pandas",
-    "numpy",
-    "plotly",
-    "python-dotenv",
-    "aiohttp",
+    "streamlit>=1.25.0,<2.0.0",
+    "pandas>=2.0.0,<3.0.0",
+    "numpy>=1.22.0,<2.0.0",
+    "plotly>=5.13.0,<6.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "aiohttp>=3.8.0,<4.0.0",
     "asyncio", # Keeping asyncio as it might be implicitly needed by aiohttp or others
-    "requests",
-    "openpyxl", # For potential future Excel export/import
-    "xlsxwriter", # For potential future Excel export/import
-    "openai>=1.0.0",
-    "langchain>=0.1.0", # Specify minimum langchain version if needed
-    "langchain-core>=0.1.0", # Specify minimum langchain version if needed
-    "langchain-openai>=0.1.0", # Specify minimum langchain version if needed
-    "PyYAML>=5.4", # For loading prompts
+    "requests>=2.28.0,<3.0.0",
+    "openpyxl>=3.1.0,<4.0.0", # For potential future Excel export/import
+    "xlsxwriter>=3.0.0,<4.0.0", # For potential future Excel export/import
+    "openai>=1.0.0,<1.5.0", # Allow updates within 1.x.y but not 1.5.0+
+    "langchain>=0.1.0,<0.2.0", # Specify minimum langchain version if needed
+    "langchain-core>=0.1.0,<0.2.0", # Specify minimum langchain version if needed
+    "langchain-openai>=0.1.0,<0.2.0", # Specify minimum langchain version if needed
+    "PyYAML>=5.4,<7.0.0", # For loading prompts
 ]
 
 [project.urls]
