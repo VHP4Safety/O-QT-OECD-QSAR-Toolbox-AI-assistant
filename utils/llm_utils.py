@@ -46,50 +46,46 @@ from .data_formatter import safe_json
 load_dotenv()
 
 # --- Prompt Loading ---
-@lru_cache() # Cache results to avoid re-reading the file constantly
-def load_prompts(prompt_file: str = "utils/prompts.yaml") -> Dict[str, Any]:
-    """Loads prompts from the specified YAML file."""
+@lru_cache() # Cache results
+def load_prompts(prompt_file: str = "prompts.yaml") -> Dict[str, Any]:
+    """Loads prompts from the YAML file within the same directory."""
     prompts = {}
     try:
-        # Use Path for better cross-platform compatibility
-        file_path = Path(__file__).parent / Path(prompt_file).name
-        with open(file_path, 'r') as f:
+        # Construct path relative to the current file (__file__)
+        file_path = Path(__file__).parent / prompt_file
+        with open(file_path, 'r', encoding='utf-8') as f: # Specify encoding
             prompts = yaml.safe_load(f)
-        if not prompts: # Handle empty file case
-                 print(f"Warning: Prompt file '{file_path}' is empty.")
-                 return {} # Return empty dict, fallback logic will be needed later
-        print(f"Successfully loaded prompts from {file_path}") # Add log for confirmation
+        if not prompts:
+            print(f"Warning: Prompt file '{file_path}' is empty or invalid.")
+            return {}
+        print(f"Successfully loaded prompts from {file_path}")
         return prompts
     except FileNotFoundError:
-        print(f"ERROR: Prompt file not found at {file_path}. Check the path.")
-        # No fallback here, raise or return empty dict depending on desired strictness
-        # Returning empty dict to allow agent functions to handle missing prompts
-        return {}
+        print(f"ERROR: Prompt file not found at {file_path}. Ensure '{prompt_file}' is in the 'utils' directory.")
+        return {} # Return empty dict, agent functions need to handle this
     except yaml.YAMLError as e:
         print(f"ERROR: Failed to parse YAML from {file_path}: {e}")
-        # Returning empty dict to allow agent functions to handle errors
         return {}
     except Exception as e:
         print(f"ERROR: An unexpected error occurred loading prompts: {e}")
-        return {} # General fallback
+        return {}
 
 # Load prompts ONCE at module level
 ALL_PROMPTS = load_prompts()
 
-# --- Helper to get specific prompt safely ---
+# Helper to get prompts safely (keep or adapt the existing one)
 def get_prompt(key: str, prompt_type: str = "system") -> str:
     """Safely retrieves a specific prompt, providing a default if not found."""
     try:
-        # Drill down into the structure: ALL_PROMPTS -> key -> prompt_type
         prompt = ALL_PROMPTS.get(key, {}).get(prompt_type)
         if prompt is None:
             print(f"Warning: Prompt '{key}.{prompt_type}' not found in YAML. Using default.")
-            # Define a generic fallback prompt
-            return f"Default {prompt_type} prompt for {key}. YAML load failed or key missing."
+            # Provide a more informative default
+            return f"DEFAULT PROMPT: Task details for {key} ({prompt_type}) were expected but not found in prompts.yaml."
         return prompt
     except Exception as e:
          print(f"Error retrieving prompt '{key}.{prompt_type}': {e}. Using default.")
-         return f"Default {prompt_type} prompt for {key}. Error during retrieval."
+         return f"DEFAULT PROMPT: Error retrieving task details for {key} ({prompt_type})."
 
 
 # --- LLM Initialization (keep as is) ---
