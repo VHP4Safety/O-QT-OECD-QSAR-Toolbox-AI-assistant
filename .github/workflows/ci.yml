@@ -10,6 +10,8 @@ jobs:
       matrix:
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"] # Test multiple versions
 
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
     - uses: actions/checkout@v4 # Checks out your code
 
