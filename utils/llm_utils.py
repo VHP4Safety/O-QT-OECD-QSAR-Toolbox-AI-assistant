@@ -4,7 +4,36 @@ Utility functions for LLM-based report generation using a multi-agent approach.
 import os
 import asyncio
 import json
+from functools import lru_cache
+from functools import wraps
 from typing import Dict, Any, List, Optional # Removed Union, Pydantic
+
+def async_lru_cache(maxsize=128):
+    """Decorator to create an LRU cache for async functions."""
+    cache = {}
+    order = []
+    
+    def decorator(async_func):
+        @wraps(async_func)
+        async def wrapper(*args, **kwargs):
+            key = str((args, sorted(kwargs.items())))
+            
+            if key in cache:
+                order.remove(key)
+                order.append(key)
+                return cache[key]
+            
+            result = await async_func(*args, **kwargs)
+            
+            if len(cache) >= maxsize:
+                oldest_key = order.pop(0)
+                cache.pop(oldest_key)
+            
+            cache[key] = result
+            order.append(key)
+            return result
+        return wrapper
+    return decorator
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,7 +44,6 @@ from .data_formatter import safe_json
 
 # Load environment variables
 load_dotenv()
-
 
 # --- LLM Initialization ---
 
@@ -38,7 +66,6 @@ llm = get_llm()
 # Output parser for synthesizer (still needed)
 output_parser = StrOutputParser()
 
-
 # --- Specialist Agent Prompts (Adjusted for JSON Input) ---
 
 # --- NEW: Chemical Context Agent Prompts ---
@@ -59,7 +86,6 @@ Raw Basic Chemical Info (JSON Format):
 ```
 
 Please extract the primary chemical identifiers from the JSON data above."""
-
 
 PHYS_PROPS_SYSTEM_PROMPT = """You are a specialist agent focused on analyzing chemical physical properties.
 Your task is to analyze the provided raw chemical properties data, which is formatted as a JSON string in the user message under 'Raw Chemical Properties Data (JSON Format)'.
@@ -167,10 +193,10 @@ Other Specialist Analyses:
 
 Please provide a read-across analysis, including data gaps, strategy, and 3-4 potential analogue suggestions based *only* on the provided data and analyses."""
 
-
 # --- Specialist Agent Functions (Reverted to Text Analysis Output) ---
 
 # --- NEW: Chemical Context Agent Function ---
+@async_lru_cache(maxsize=128)
 async def analyze_chemical_context(chemical_data: Dict[str, Any], context: str) -> str:
     """Extracts key chemical identifiers using an LLM agent."""
     try:
@@ -201,7 +227,7 @@ async def analyze_chemical_context(chemical_data: Dict[str, Any], context: str) 
         smiles = chemical_data.get('basic_info', {}).get('SMILES', 'N/A')
         return f"Confirmed Chemical: {name} (CAS: {cas}, SMILES: {smiles}) [Error during analysis: {e}]"
 
-
+@async_lru_cache(maxsize=128)
 async def analyze_physical_properties(data: Dict[str, Any], context: str) -> str:
     """Analyzes physical properties using an LLM agent, returning text."""
     try:
@@ -222,6 +248,7 @@ async def analyze_physical_properties(data: Dict[str, Any], context: str) -> str
         print(error_msg)
         return error_msg
 
+@async_lru_cache(maxsize=128)
 async def analyze_environmental_fate(data: Dict[str, Any], context: str) -> str:
     """Analyzes environmental fate properties using an LLM agent, returning text."""
     try:
@@ -242,6 +269,7 @@ async def analyze_environmental_fate(data: Dict[str, Any], context: str) -> str:
         print(error_msg)
         return error_msg
 
+@async_lru_cache(maxsize=128)
 async def analyze_profiling_reactivity(data: Dict[str, Any], context: str) -> str:
     """Analyzes profiling and reactivity using an LLM agent, returning text."""
     try:
@@ -262,6 +290,7 @@ async def analyze_profiling_reactivity(data: Dict[str, Any], context: str) -> st
         print(error_msg)
         return error_msg
 
+@async_lru_cache(maxsize=128)
 async def analyze_experimental_data(data: Dict[str, Any], context: str) -> str:
     """Analyzes experimental data using an LLM agent, returning text."""
     try:
@@ -284,6 +313,7 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str) -> str:
         return error_msg
 
 # --- NEW: Read Across Agent Function ---
+@async_lru_cache(maxsize=128)
 async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[str], context: str) -> str:
     """Analyzes data gaps and suggests read-across strategy using an LLM agent."""
     try:
@@ -308,9 +338,8 @@ async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[
         print(error_msg)
         return error_msg
 
-
 # --- Synthesizer Agent Function (MODIFIED) ---
-
+@async_lru_cache(maxsize=128)
 async def synthesize_report(
     chemical_identifier: str,
     specialist_outputs: List[str],
@@ -335,7 +364,6 @@ async def synthesize_report(
         exp_analysis = analyses[3]
         # Ensure read_across_report is also a string
         read_across_analysis = read_across_report if isinstance(read_across_report, str) else "Error: Invalid read-across analysis format received."
-
 
         # MODIFIED Prompts to include chemical_identifier and read_across_report
         SYNTHESIZER_SYSTEM_PROMPT_MODIFIED = """You are a lead chemical analysis expert. You have received analyses from several specialist agents focusing on different aspects of a chemical (physical properties, environmental fate, profiling/reactivity, experimental data) and a read-across analysis.

@@ -278,6 +278,8 @@ async def main():
             st.session_state.specialist_outputs_dict = None # Reset specialist outputs
             st.session_state.error = None
             st.session_state.retry_count = 0
+            if 'exp_data_page' in st.session_state:
+                st.session_state.exp_data_page = 1  # Reset to page 1 for new data
             # Create progress bar placeholder here
             st.session_state.progress_bar = st.progress(0.0, text="Status: Starting analysis...")
 

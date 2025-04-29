@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any, List, Union
 import urllib.parse
 import json
 import logging
+from functools import lru_cache
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -88,6 +89,7 @@ class QSARToolboxAPI:
         """Get API version information"""
         return self._make_request('about/toolbox/version')
 
+    @lru_cache(maxsize=64)
     def search_by_name(self, name: str, search_option: str = SearchOptions.CONTAINS) -> List[Dict[str, Any]]:
         """Search chemical by name with a shorter timeout. Defaults to CONTAINS for robustness."""
         encoded_name = urllib.parse.quote(name)
@@ -106,6 +108,7 @@ class QSARToolboxAPI:
             # Restore original timeout
             self.timeout = original_timeout
 
+    @lru_cache(maxsize=64)
     def search_by_smiles(self, smiles: str) -> List[Dict[str, Any]]:
         """Search chemical by SMILES with a shorter timeout"""
         # Use shorter timeout for search to prevent hanging
@@ -122,6 +125,7 @@ class QSARToolboxAPI:
             # Restore original timeout
             self.timeout = original_timeout
 
+    @lru_cache(maxsize=32)
     def get_all_chemical_data(self, chem_id: str) -> List[Dict[str, Any]]:
         """Get all experimental data for a chemical with a shorter timeout"""
         # Use shorter timeout for data fetching to prevent hanging
@@ -139,6 +143,7 @@ class QSARToolboxAPI:
             # Restore original timeout
             self.timeout = original_timeout
 
+    @lru_cache(maxsize=32)
     def apply_all_calculators(self, chem_id: str) -> Dict[str, Any]:
         """Apply all calculators to a chemical with a shorter timeout"""
         # Use shorter timeout for calculator operations to prevent hanging
@@ -205,6 +210,7 @@ class QSARToolboxAPI:
                 "Rat liver S9 metabolism": {"Guid": "6f90b44e-cd34-4b10-be36-e9f2b1d9f5f0", "Caption": "Rat liver S9 metabolism"}
             }
         
+    @lru_cache(maxsize=16)
     def get_chemical_profiling(self, chem_id: str) -> Dict[str, Any]:
         """Get profiling results for a specific chemical using all available profilers"""
         try:

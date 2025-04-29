@@ -2,6 +2,8 @@
 Data formatting utilities for QSAR Toolbox responses
 """
 from typing import Dict, Any, List
+# Removed unused lru_cache import
+# from functools import lru_cache
 
 def format_calculator_result(result: Dict[str, Any]) -> Dict[str, Any]:
     """Format a calculator result into a clean dictionary"""
@@ -63,7 +65,8 @@ def clean_response_data(data: Dict[str, Any]) -> Dict[str, Any]:
         for key, calc in data["chemical_data"]["properties"].items():
             formatted = format_calculator_result(calc)
             if formatted:
-                properties[formatted["name"]] = {
+                # Use the original key ('Boiling Point', etc.) instead of formatted['name']
+                properties[key] = {
                     "value": formatted["value"],
                     "unit": formatted["unit"],
                     "type": formatted["type"],
@@ -131,6 +134,7 @@ def clean_response_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
 # --- Safe JSON Serialization ---
 
+# Removed @lru_cache decorator as it cannot handle unhashable dict inputs
 def safe_json(obj):
     """Safely serialize Python objects to JSON, handling common non-serializable types."""
     import json, decimal, numpy as np

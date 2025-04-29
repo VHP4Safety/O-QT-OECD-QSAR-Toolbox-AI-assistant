@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import math
 from typing import Dict, Any, List
 from utils.data_formatter import clean_response_data
 
@@ -84,7 +85,51 @@ def render_results_section(results: Dict[str, Any], identifier_display: str):
         st.subheader("Experimental Data")
         if cleaned_results["experimental_data"]:
             exp_df = pd.DataFrame(cleaned_results["experimental_data"])
-            st.dataframe(exp_df, use_container_width=True)
+            
+            # --- Pagination Logic ---
+            items_per_page = 15  # Number of rows per page
+            total_items = len(exp_df)
+
+            if total_items > items_per_page:
+                total_pages = math.ceil(total_items / items_per_page)
+
+                # Use session state to remember the current page
+                if 'exp_data_page' not in st.session_state:
+                    st.session_state.exp_data_page = 1
+
+                # Ensure page number stays within bounds if data changes
+                st.session_state.exp_data_page = min(st.session_state.exp_data_page, total_pages)
+                st.session_state.exp_data_page = max(st.session_state.exp_data_page, 1)
+
+                # Display pagination controls: Previous button, Page indicator, Next button
+                col1, col2, col3 = st.columns([2, 1, 2])  # Adjust column ratios as needed
+
+                with col1:
+                    # Disable button if on the first page
+                    if st.button("⬅️ Previous", key="exp_prev_page", disabled=(st.session_state.exp_data_page <= 1)):
+                        st.session_state.exp_data_page -= 1
+                        st.rerun()
+
+                with col2:
+                    # Display current page and total pages
+                    st.write(f"Page {st.session_state.exp_data_page} of {total_pages}")
+
+                with col3:
+                    # Disable button if on the last page
+                    if st.button("Next ➡️", key="exp_next_page", disabled=(st.session_state.exp_data_page >= total_pages)):
+                        st.session_state.exp_data_page += 1
+                        st.rerun()
+
+                # Calculate slice indices for the current page
+                start_idx = (st.session_state.exp_data_page - 1) * items_per_page
+                end_idx = start_idx + items_per_page
+
+                # Display the sliced DataFrame for the current page
+                st.dataframe(exp_df.iloc[start_idx:end_idx], use_container_width=True)
+            else:
+                # If data fits on one page, display the whole DataFrame
+                st.dataframe(exp_df, use_container_width=True)
+            # --- End Pagination Logic ---
         else:
             st.info("No experimental data available for this chemical")
     

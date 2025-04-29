@@ -13,3 +13,5 @@ openai>=1.0.0
 langchain
 langchain-core
 langchain-openai
+pytest
+pytest-asyncio
