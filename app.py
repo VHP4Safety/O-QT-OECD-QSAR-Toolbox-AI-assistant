@@ -247,8 +247,8 @@ async def main():
 
     initialize_session_state()
 
-    st.title("🧪 Chemical Hazard Assistant (Agentic)")
-    st.markdown("Chemical Analysis and Hazard Assessment System - Multi-Agent Analysis")
+    st.title("🧪OECD QSAR Toolbox Assistant")
+    st.markdown("Multi-Agent Chemical Analysis, Hazard Assessment and Read-Across recommendations")
 
     api_url = os.getenv('QSAR_TOOLBOX_API_URL', 'Not set')
     st.sidebar.info(f"API URL: {api_url}")

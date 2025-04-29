@@ -64,9 +64,17 @@ def clean_response_data(data: Dict[str, Any]) -> Dict[str, Any]:
         properties = {}
         for key, calc in data["chemical_data"]["properties"].items():
             formatted = format_calculator_result(calc)
-            if formatted:
-                # Use the original key ('Boiling Point', etc.) instead of formatted['name']
-                properties[key] = {
+            if formatted and formatted["name"] != "Unknown":
+                # Use the formatted name ('Boiling Point', etc.) as the key
+                properties[formatted["name"]] = {
+                    "value": formatted["value"],
+                    "unit": formatted["unit"],
+                    "type": formatted["type"],
+                    "family": formatted["family"]
+                }
+            elif formatted:
+                 # Fallback to original key if name is unknown
+                 properties[key] = {
                     "value": formatted["value"],
                     "unit": formatted["unit"],
                     "type": formatted["type"],

@@ -1,6 +1,6 @@
-# QSAR Toolbox MultiAgent Assisstant
+# 🧪OECD QSAR Toolbox Assistant
 
-A streamlined chemical analysis platform that integrates the QSAR Toolbox API with an advanced multi-agent AI system to provide comprehensive chemical characterization, hazard assessment, and read-across analysis.
+Multi-Agent Chemical Analysis, Hazard Assessment and Read Across recommendations
 
 ## Features
 
