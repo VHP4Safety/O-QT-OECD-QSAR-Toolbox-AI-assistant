@@ -28,4 +28,6 @@ jobs:
 
     - name: Run tests with pytest
       run: |
-        pytest # pytest will automatically discover tests in the 'tests' directory
+        # Explicitly add src to PYTHONPATH for robust discovery
+        export PYTHONPATH="${PYTHONPATH}:./src"
+        pytest

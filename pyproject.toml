@@ -60,9 +60,6 @@ dev = [
 
 # --- Tool Configurations ---
 
-[tool.setuptools.packages.find]
-# Tells setuptools to look for packages under the 'src' directory
-where = ["src"]
 
 [tool.pytest.ini_options]
 # Configure pytest
