@@ -1,0 +1,29 @@
+name: OECD QSAR Toolbox Assistant CI
+
+on: [push, pull_request] # Triggers on pushes and pull requests
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # Don't cancel all jobs if one Python version fails
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"] # Test multiple versions
+
+    steps:
+    - uses: actions/checkout@v4 # Checks out your code
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Install the package itself along with its dependencies + dev dependencies
+        pip install .[dev]
+
+    - name: Run tests with pytest
+      run: |
+        pytest # pytest will automatically discover tests in the 'tests' directory
