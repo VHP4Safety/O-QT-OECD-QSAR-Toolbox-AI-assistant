@@ -103,11 +103,19 @@ def get_prompt(key: str, prompt_type: str = "system") -> str:
 
 
 # --- LLM Initialization (keep as is) ---
+@lru_cache() # Add this line
 def get_llm():
     """Initializes and returns the LangChain ChatOpenAI instance."""
     api_key = os.getenv('OPENAI_API_KEY')
     if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable not set")
+        # Set a dummy key ONLY if running inside pytest environment
+        # This allows tests to import the module without crashing
+        if "PYTEST_CURRENT_TEST" in os.environ:
+             print("Warning: OPENAI_API_KEY not set, using dummy key for pytest collection.")
+             api_key = "DUMMY_API_KEY_FOR_PYTEST" # Or handle this more elegantly if needed
+        else:
+             raise ValueError("OPENAI_API_KEY environment variable not set")
+
     # Using langchain's integration for async capabilities
     return ChatOpenAI(
         model="gpt-4.1", # Changed to user-specified model
@@ -117,7 +125,6 @@ def get_llm():
         request_timeout=60.0
     )
 
-llm = get_llm()
 output_parser = StrOutputParser()
 
 # --- Specialist Agent Functions (MODIFIED) ---
@@ -138,7 +145,7 @@ async def analyze_chemical_context(chemical_data: Dict[str, Any], context: str) 
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | llm | output_parser # [cite: 283]
+        chain = prompt_template | get_llm() | output_parser # [cite: 283]
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         # ... (keep existing fallback logic if needed) [cite: 284]
@@ -167,7 +174,7 @@ async def analyze_physical_properties(data: Dict[str, Any], context: str) -> str
             ("system", system_prompt),
             ("human", user_template)
         ]) # [cite: 286]
-        chain = prompt_template | llm | output_parser # [cite: 287]
+        chain = prompt_template | get_llm() | output_parser # [cite: 287]
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -190,7 +197,7 @@ async def analyze_environmental_fate(data: Dict[str, Any], context: str) -> str:
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | llm | output_parser # [cite: 289]
+        chain = prompt_template | get_llm() | output_parser # [cite: 289]
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -213,7 +220,7 @@ async def analyze_profiling_reactivity(data: Dict[str, Any], context: str) -> st
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | llm | output_parser # [cite: 291]
+        chain = prompt_template | get_llm() | output_parser # [cite: 291]
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -236,7 +243,7 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str) -> str:
             ("system", system_prompt),
             ("human", user_template) # [cite: 293]
         ])
-        chain = prompt_template | llm | output_parser # [cite: 294]
+        chain = prompt_template | get_llm() | output_parser # [cite: 294]
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -261,7 +268,7 @@ async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[
             ("system", system_prompt),
             ("human", user_template) # [cite: 296]
         ])
-        chain = prompt_template | llm | output_parser # [cite: 297]
+        chain = prompt_template | get_llm() | output_parser # [cite: 297]
         input_dict = {
             "context": context,
             "results_json": results_json,
@@ -313,7 +320,7 @@ async def synthesize_report(
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | llm | output_parser # [cite: 312]
+        chain = prompt_template | get_llm() | output_parser # [cite: 312]
         input_dict = {
             "chemical_identifier": chemical_identifier,
             "context": context,
