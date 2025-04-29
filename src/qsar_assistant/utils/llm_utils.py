@@ -34,6 +34,15 @@ def async_lru_cache(maxsize=128):
             cache[key] = result
             order.append(key)
             return result
+
+        def cache_clear():
+            """Clear the cache."""
+            nonlocal cache, order
+            cache.clear()
+            order.clear()
+            print(f"Cache cleared for {async_func.__name__}") # Optional: for debugging
+
+        wrapper.cache_clear = cache_clear
         return wrapper
     return decorator
 
@@ -43,7 +52,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from .data_formatter import safe_json
 
-load_dotenv()
+# Load .env from project root (adjust path for src layout)
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
 
 # --- Prompt Loading ---
 @lru_cache() # Cache results

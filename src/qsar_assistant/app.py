@@ -8,13 +8,13 @@ from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 # from pydantic import BaseModel # No longer needed
 
-# Load environment variables from .env file
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+# Load environment variables from .env file (adjust path for src layout)
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
 
-# Use relative imports
-from utils.qsar_api import QSARToolboxAPI, QSARConnectionError, QSARTimeoutError, QSARResponseError
+# Use absolute imports based on the package structure
+from qsar_assistant.utils.qsar_api import QSARToolboxAPI, QSARConnectionError, QSARTimeoutError, QSARResponseError
 # Import new agent functions
-from utils.llm_utils import (
+from qsar_assistant.utils.llm_utils import (
     analyze_chemical_context, # Added
     analyze_physical_properties,
     analyze_environmental_fate,
@@ -23,8 +23,8 @@ from utils.llm_utils import (
     analyze_read_across, # Added
     synthesize_report
 )
-from components.search import render_search_section
-from components.results import render_results_section, render_download_section # Keep render_download_section for raw data
+from qsar_assistant.components.search import render_search_section
+from qsar_assistant.components.results import render_results_section, render_download_section # Keep render_download_section for raw data
 
 def initialize_session_state():
     """Initialize or reset session state variables"""
@@ -175,12 +175,29 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
              else:
                  raise QSARTimeoutError("Maximum retries exceeded during chemical search")
 
+        selected_chemical_data = None
         if isinstance(search_result, list):
             if not search_result:
-                raise QSARResponseError(f"No results found for: {identifier}")
-            chemical_data = search_result[0]
+                raise QSARResponseError(f"Chemical not found: {identifier}")
+            
+            # Prioritize exact match
+            for chemical in search_result:
+                # Assuming 'Name' is the field containing the chemical name
+                if isinstance(chemical, dict) and chemical.get('Name', '').lower() == identifier.lower():
+                    selected_chemical_data = chemical
+                    break # Found exact match, stop searching
+                    
+            # If no exact match found, fall back to the first result
+            if selected_chemical_data is None:
+                selected_chemical_data = search_result[0]
+                st.warning(f"Exact match for '{identifier}' not found. Displaying the first search result: {selected_chemical_data.get('Name', 'Unknown Chemical')}")
+
         else:
-            chemical_data = search_result
+            # If search_result is not a list, assume it's a single result dictionary
+            selected_chemical_data = search_result
+            
+        chemical_data = selected_chemical_data # Use the selected data
+        
         chem_id = chemical_data.get('ChemId')
         if not chem_id:
              raise QSARResponseError("Could not retrieve ChemId from search result.")

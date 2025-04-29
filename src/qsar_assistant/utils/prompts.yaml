@@ -48,7 +48,7 @@ env_fate:
     2. Explain the significance of each property regarding the chemical's persistence, bioaccumulation, and mobility in the environment.
     3. Relate these properties specifically to the user's provided analysis context (e.g., environmental risk, bioaccumulation potential).
     4. Try to include specific parameter values and units found in the data (e.g., "BCF: 2.5 log(L/kg)").
-    If a value is missing, state that clearly rather than using placeholders like {value}.
+    If a value is missing, state that clearly. Do not invent or use placeholder values.
     5. Structure your analysis clearly.
     Ignore other data types like experimental or profiling data.
     Use clear, scientific language.

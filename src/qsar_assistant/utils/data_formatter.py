@@ -62,24 +62,18 @@ def clean_response_data(data: Dict[str, Any]) -> Dict[str, Any]:
     # Clean properties
     if "chemical_data" in data and "properties" in data["chemical_data"]:
         properties = {}
-        for key, calc in data["chemical_data"]["properties"].items():
+        for key, calc in data["chemical_data"]["properties"].items(): # Corrected indentation
             formatted = format_calculator_result(calc)
-            if formatted and formatted["name"] != "Unknown":
-                # Use the formatted name ('Boiling Point', etc.) as the key
-                properties[formatted["name"]] = {
+            # Always use the original key from the API response ('LogP', 'BoilingPoint', etc.)
+            # This ensures consistency regardless of the CalculatorName.
+            if formatted: # Corrected indentation
+                properties[key] = {
                     "value": formatted["value"],
-                    "unit": formatted["unit"],
-                    "type": formatted["type"],
-                    "family": formatted["family"]
-                }
-            elif formatted:
-                 # Fallback to original key if name is unknown
-                 properties[key] = {
-                    "value": formatted["value"],
-                    "unit": formatted["unit"],
-                    "type": formatted["type"],
-                    "family": formatted["family"]
-                }
+                        "unit": formatted["unit"],
+                        "type": formatted["type"], # Keep type from formatted result
+                        "family": formatted["family"], # Keep family from formatted result
+                        "calculator_name": formatted["name"] # Optionally store the calculator name
+                    }
         cleaned["properties"] = properties
     
     # Clean experimental data

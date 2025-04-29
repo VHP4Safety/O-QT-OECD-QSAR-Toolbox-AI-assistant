@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qsar-assistant"
+version = "0.9.0"
+authors = [
+    { name="Ivo Djidrovski", email="i.djidrovski@uu.nl" },
+]
+description = "Multi-Agent Chemical Analysis using OECD QSAR Toolbox API and LLMs."
+readme = "README.md"
+license = { file="LICENSE" }
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    # "Framework :: Streamlit", # Removed invalid classifier
+]
+dependencies = [
+    "streamlit",
+    "pandas",
+    "numpy",
+    "plotly",
+    "python-dotenv",
+    "aiohttp",
+    "asyncio", # Keeping asyncio as it might be implicitly needed by aiohttp or others
+    "requests",
+    "openpyxl", # For potential future Excel export/import
+    "xlsxwriter", # For potential future Excel export/import
+    "openai>=1.0.0",
+    "langchain>=0.1.0", # Specify minimum langchain version if needed
+    "langchain-core>=0.1.0", # Specify minimum langchain version if needed
+    "langchain-openai>=0.1.0", # Specify minimum langchain version if needed
+    "PyYAML>=5.4", # For loading prompts
+]
+
+[project.urls]
+# Update these URLs if your repository location changes
+Homepage = "https://github.com/placeholder/qsar-assistant"
+Issues = "https://github.com/placeholder/qsar-assistant/issues"
+
+[project.scripts]
+# Defines the command-line script entry point
+qsar-assistant = "qsar_assistant.cli:main"
+
+[project.optional-dependencies]
+# Dependencies for development and testing
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio",
+    "pytest-cov", # For coverage reporting
+    "coverage[toml]>=6.0", # For coverage configuration
+    "requests-mock", # Useful for mocking HTTP requests in tests
+    "mypy", # Optional: for static type checking
+    "ruff", # Optional: for linting and formatting
+]
+
+# --- Tool Configurations ---
+
+[tool.setuptools.packages.find]
+# Tells setuptools to look for packages under the 'src' directory
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Configure pytest
+testpaths = ["tests"] # Directory where tests are located
+# Automatically handle asyncio tests
+asyncio_mode = "auto"
+# Add markers if needed, e.g., @pytest.mark.integration
+# markers = [
+#     "integration: marks tests as integration tests",
+# ]
+# No pythonpath needed with src layout
+
+[tool.coverage.run]
+# Configure coverage.py when run via pytest-cov
+source = ["qsar_assistant"] # Measure coverage for the main package
+branch = true # Measure branch coverage
+# omit = [ # Optional: exclude files/directories from coverage
+#     "src/qsar_assistant/__main__.py",
+# ]
+
+[tool.coverage.report]
+# Configure coverage report generation
+fail_under = 80 # Fail build if coverage drops below 80%
+show_missing = true # Show line numbers of uncovered code
+# exclude_lines = [ # Optional: exclude specific lines
+#     "pragma: no cover",
+#     "if TYPE_CHECKING:",
+#     "raise NotImplementedError",
+# ]
+
+# Optional: Ruff configuration (linter/formatter)
+# [tool.ruff]
+# line-length = 88
+# select = ["E", "W", "F", "I", "UP", "PL", "T20"] # Example rule selection
+# ignore = ["E501"] # Ignore line too long if needed selectively
+
+# Optional: Mypy configuration (static type checking)
+# [tool.mypy]
+# python_version = "3.8"
+# warn_return_any = true
+# warn_unused_configs = true
+# ignore_missing_imports = true # Be careful with this

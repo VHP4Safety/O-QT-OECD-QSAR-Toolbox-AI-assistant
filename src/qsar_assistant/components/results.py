@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 from typing import Dict, Any, List
-from utils.data_formatter import clean_response_data
+from ..utils.data_formatter import clean_response_data
 
 def display_profilers_list(available_profilers):
     """Helper method to display a list of profilers"""

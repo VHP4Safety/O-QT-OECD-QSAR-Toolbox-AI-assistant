@@ -1,9 +1,9 @@
 # tests/test_data_formatter.py
 import pytest
 # Import the module itself for cache clearing
-from streamlined_qsar_app.utils import data_formatter
+from qsar_assistant.utils import data_formatter
 # Assuming utils is importable from tests directory. Adjust if necessary.
-from streamlined_qsar_app.utils.data_formatter import format_calculator_result, format_chemical_data, clean_response_data, safe_json # [cite: 74, 76, 77, 91]
+from qsar_assistant.utils.data_formatter import format_calculator_result, format_chemical_data, clean_response_data, safe_json # [cite: 74, 76, 77, 91]
 
 # Removed cache clearing fixture as safe_json is no longer cached
 

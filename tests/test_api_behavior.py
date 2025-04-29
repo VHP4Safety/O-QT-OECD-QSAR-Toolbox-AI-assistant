@@ -15,7 +15,7 @@ class TestChemicalAnalysis:
     @pytest.mark.asyncio
     async def test_chemical_data_formatting(self):
         """Test the data formatting doesn't throw errors and has expected keys."""
-        from streamlined_qsar_app.utils.data_formatter import format_chemical_data, format_calculator_result, clean_response_data
+        from qsar_assistant.utils.data_formatter import format_chemical_data, format_calculator_result, clean_response_data
 
         # Test format_chemical_data with minimal data
         chemical_data_result = format_chemical_data({"SubstanceType": "Test", "ChemId": "123"})
@@ -44,7 +44,7 @@ class TestChemicalAnalysis:
     @pytest.mark.asyncio
     async def test_safe_json_serialization(self):
         """Test the safe_json serialization function handles complex types."""
-        from streamlined_qsar_app.utils.data_formatter import safe_json
+        from qsar_assistant.utils.data_formatter import safe_json
         
         # Test dict serialization
         data = {"name": "test", "value": 123}
@@ -57,7 +57,7 @@ class TestChemicalAnalysis:
     @pytest.mark.asyncio
     async def test_qsar_api_error_classes(self):
         """Test that QSAR API error classes are correctly defined."""
-        from streamlined_qsar_app.utils.qsar_api import QSARConnectionError, QSARTimeoutError, QSARResponseError
+        from qsar_assistant.utils.qsar_api import QSARConnectionError, QSARTimeoutError, QSARResponseError
         
         # Test that error classes exist and are Exception subclasses
         assert issubclass(QSARConnectionError, Exception)
@@ -71,7 +71,7 @@ class TestChemicalAnalysis:
     @pytest.mark.asyncio
     async def test_agent_functions_exist(self):
         """Test that the agent functions exist and have the expected signature."""
-        from streamlined_qsar_app.utils.llm_utils import (
+        from qsar_assistant.utils.llm_utils import (
             analyze_chemical_context,
             analyze_physical_properties,
             analyze_environmental_fate,

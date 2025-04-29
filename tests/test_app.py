@@ -8,7 +8,7 @@ import streamlit as st # Needed for session_state mocking if testing functions d
 
 # Example: Unit test a helper function
 # Assuming app.py is importable. Adjust if necessary.
-from streamlined_qsar_app.app import initialize_session_state # [cite: 25]
+from qsar_assistant.app import initialize_session_state # [cite: 25]
 
 def test_initialize_session_state_defaults():
     """Test that session state gets default values"""
@@ -28,14 +28,14 @@ def test_initialize_session_state_defaults():
 # Example: Integration-style test for the main analysis function (simplified)
 # This requires mocking API and LLM calls made within perform_chemical_analysis and the main async flow
 # Adjust patch targets based on actual imports in app.py
-@patch('streamlined_qsar_app.app.perform_chemical_analysis') # Mock the data fetching part [cite: 34]
-@patch('streamlined_qsar_app.app.analyze_chemical_context', new_callable=AsyncMock) # [cite: 51, 212]
-@patch('streamlined_qsar_app.app.analyze_physical_properties', new_callable=AsyncMock) # [cite: 55, 216]
-@patch('streamlined_qsar_app.app.analyze_environmental_fate', new_callable=AsyncMock) # [cite: 55, 218]
-@patch('streamlined_qsar_app.app.analyze_profiling_reactivity', new_callable=AsyncMock) # [cite: 55, 220]
-@patch('streamlined_qsar_app.app.analyze_experimental_data', new_callable=AsyncMock) # [cite: 55, 222]
-@patch('streamlined_qsar_app.app.analyze_read_across', new_callable=AsyncMock) # [cite: 60, 225]
-@patch('streamlined_qsar_app.app.synthesize_report', new_callable=AsyncMock) # [cite: 61, 229]
+@patch('qsar_assistant.app.perform_chemical_analysis') # Mock the data fetching part [cite: 34]
+@patch('qsar_assistant.app.analyze_chemical_context', new_callable=AsyncMock) # [cite: 51, 212]
+@patch('qsar_assistant.app.analyze_physical_properties', new_callable=AsyncMock) # [cite: 55, 216]
+@patch('qsar_assistant.app.analyze_environmental_fate', new_callable=AsyncMock) # [cite: 55, 218]
+@patch('qsar_assistant.app.analyze_profiling_reactivity', new_callable=AsyncMock) # [cite: 55, 220]
+@patch('qsar_assistant.app.analyze_experimental_data', new_callable=AsyncMock) # [cite: 55, 222]
+@patch('qsar_assistant.app.analyze_read_across', new_callable=AsyncMock) # [cite: 60, 225]
+@patch('qsar_assistant.app.synthesize_report', new_callable=AsyncMock) # [cite: 61, 229]
 @pytest.mark.asyncio
 async def test_main_analysis_flow(
     mock_synthesize, mock_read_across, mock_exp, mock_prof, mock_env, mock_phys, mock_context, mock_perform_analysis
