@@ -39,6 +39,9 @@ The QSAR Toolbox EULA **strictly prohibits** redistribution, copying (except for
 
 Therefore, **manual installation and API activation by each user on a Windows machine is the only compliant way** to use this assistant application.
 
+*(Optional: Consider adding the Docker workaround suggestion from the review here if desired)*
+> **Docker Note:** While the Toolbox itself cannot be containerized, you could potentially run *this* assistant application in a Docker container. Users would still need the QSAR Toolbox running on a Windows host (or VM) and configure the container's `QSAR_TOOLBOX_API_URL` environment variable to point to that host's IP address and port.
+
 ---
 
 ## Installation and Usage Guide
@@ -47,7 +50,7 @@ Follow these steps carefully:
 
 **Phase 1: Install and Configure the OECD QSAR Toolbox (on Windows)**
 
-*(This only needs to be done once)*
+*(This only needs to be done once. This step is MANDATORY)*
 
 1.  **Go to a Windows Machine:** You need access to a computer running Microsoft Windows.
 2.  **Download:** Visit the [OECD QSAR Toolbox Download Page](https://qsartoolbox.org/download/) and download the latest version of the Toolbox.
@@ -58,7 +61,7 @@ Follow these steps carefully:
     * Locate the "Web API" or "Web Services" settings.
     * **Check the box to enable the Web API.**
     * Note down the **Port number** it will use (the default is usually `5000`).
-    * Ensure the API is accessible. It usually defaults to `localhost` (`127.0.0.1`), which is fine if you run the Streamlit Assistant on the *same* Windows machine.
+    * Ensure the API is set to be accessible. It usually defaults to `localhost` (`127.0.0.1`), which is fine if you run the Streamlit Assistant on the *same* Windows machine.
 6.  **Keep Toolbox Running:** The QSAR Toolbox application must be running with the API enabled whenever you want to use this Streamlit Assistant.
 7.  **(Optional) Find Windows IP Address:** If you plan to run the Streamlit Assistant on a *different* computer (e.g., your Mac or Linux machine) than the Windows PC running the Toolbox:
     * Open Command Prompt on the Windows PC (search for `cmd`).
@@ -66,33 +69,26 @@ Follow these steps carefully:
     * Look for the "IPv4 Address" under your active network connection (e.g., Wi-Fi or Ethernet). It will look something like `192.168.1.105`. Note this down.
     * You may also need to configure the Windows Firewall on that PC to allow incoming connections on the port noted in step 5 (e.g., 5000).
 
-**Phase 2: Install and Configure the Streamlit Assistant (This Project)**
+**Phase 2: Install the QSAR Assistant (This Project)**
 
 *(Can be done on Windows, macOS, or Linux)*
 
-1.  **Clone Repository:**
-    ```bash
-    # Replace with the actual URL of your repository
-    git clone [https://github.com/yourusername/streamlined_qsar_app.git](https://github.com/yourusername/streamlined_qsar_app.git)
-    cd streamlined_qsar_app
-    ```
-2.  **Create Virtual Environment:**
+1.  **Prerequisites:** Ensure you have Python 3.8+ and `pip` installed.
+2.  **Create Virtual Environment (Recommended):**
     ```bash
     python -m venv venv
     # Activate:
     # Windows: venv\Scripts\activate
     # macOS/Linux: source venv/bin/activate
     ```
-3.  **Install Dependencies:**
+3.  **Install from PyPI (Recommended for users):**
     ```bash
-    pip install -r requirements.txt
+    pip install qsar-assistant
     ```
+    *(Alternatively, for development, clone the repository and install in editable mode: `pip install -e .[dev]` from the project root directory)*
 4.  **Configure Environment Variables:**
-    * Make a copy of the example file:
-        ```bash
-        cp .env.example .env
-        ```
-    * **Edit the `.env` file:**
+    * Create a file named `.env` in your working directory (or the project root if installed from source).
+    * Add the following lines, replacing placeholders with your actual values:
         ```dotenv
         # Your OpenAI API Key for the AI agents
         OPENAI_API_KEY=sk-YourActualOpenAIKeyHere
@@ -105,57 +101,143 @@ Follow these steps carefully:
 
         # Option 2: Running this Assistant on a DIFFERENT machine (Mac, Linux, another PC)
         # Use the Windows PC's IP address (from Phase 1, step 7) and the correct port (usually 5000)
-        # Example: QSAR_TOOLBOX_API_URL=[http://192.168.1.105:5000/api](http://192.168.1.105:5000/api)
+        # Example: QSAR_TOOLBOX_API_URL=http://192.168.1.105:5000/api
         ```
-        *Uncomment the correct `QSAR_TOOLBOX_API_URL` line and replace the placeholder IP if necessary.*
+        *Make sure the `QSAR_TOOLBOX_API_URL` points correctly to where your QSAR Toolbox API is running.*
 
-**Phase 3: Run the Streamlit Assistant**
+**Phase 3: Run the QSAR Assistant**
 
 1.  **Ensure Toolbox is Running:** Double-check that the OECD QSAR Toolbox is running on the Windows machine and its Web API is active (Phase 1, step 6).
-2.  **Activate Environment:** Make sure your `venv` virtual environment is activated (Phase 2, step 2).
-3.  **Start the App:**
+2.  **Activate Environment:** If you created a virtual environment, make sure it's activated.
+3.  **Run the App:** Open your terminal or command prompt and run:
     ```bash
-    streamlit run app.py
+    qsar-assistant
     ```
-4.  **Access in Browser:** Open your web browser and go to the local URL provided by Streamlit (usually `http://localhost:8501`).
-5.  **Check Connection:** The sidebar in the application should show "✅ Connected to QSAR Toolbox". If it shows an error, double-check the Toolbox is running, the API is enabled, and the `QSAR_TOOLBOX_API_URL` in your `.env` file is correct and reachable from the machine running the assistant.
+4.  **Access in Browser:** Open your web browser and go to the local URL provided (usually `http://localhost:8501`).
+5.  **Check Connection:** The sidebar in the application should show "✅ Connected to QSAR Toolbox". If it shows an error, double-check the Toolbox is running, the API is enabled, and the `QSAR_TOOLBOX_API_URL` in your `.env` file is correct and reachable.
 
 ## How to Use the Assistant
 
 1.  Use the sidebar to choose search type (Name or SMILES) and enter the identifier.
-2.  Optionally, provide context for the AI analysis (e.g., "assess potential for liver toxicity"). [cite: 446]
-3.  Click "Analyze Chemical". [cite: 47]
+2.  Optionally, provide context for the AI analysis (e.g., "assess potential for liver toxicity").
+3.  Click "Analyze Chemical" in the sidebar.
 4.  Wait for the analysis (progress bar will update). Data is fetched from the QSAR Toolbox API, then processed by the AI agents.
 5.  Explore the results in the tabs: Chemical Overview, Properties, Experimental Data, Profiling.
-6.  View the final synthesized report generated by the AI. [cite: 28]
-7.  Download raw data or reports using the download buttons.
+6.  View the final synthesized report generated by the AI.
+7.  Download raw data, the synthesized report, or individual specialist analyses using the download buttons.
+
+## Workflow Overview
+
+![QSAR Assistant Workflow](qsar-workflow.svg)
+
+The application follows a multi-stage process:
+
+1.  **QSAR Toolbox API Setup:** (User action) Install and run the OECD QSAR Toolbox with its Web API enabled on a Windows machine.
+2.  **User Input:** Provide a chemical identifier (Name/SMILES) and optional analysis context via the Streamlit interface.
+3.  **Data Collection:** The application connects to the configured QSAR Toolbox API to retrieve chemical data (properties, experimental, profiling).
+4.  **Chemical Context Establishment:** An AI agent confirms the precise chemical identity.
+5.  **Parallel Specialist Analysis:** Multiple AI agents concurrently analyze specific data subsets (properties, environmental fate, profiling, experimental data).
+6.  **Read-Across Analysis:** An AI agent analyzes data gaps and suggests a detailed read-across strategy and potential analogues.
+7.  **Report Synthesis:** A final AI agent synthesizes all specialist outputs and the read-across analysis into a comprehensive report.
+8.  **Output:** Display results, reports, and download options in the Streamlit UI.
+
+---
 
 ## Project Structure
 
 ```
-streamlined_qsar_app/
-├── app.py                 # Main Streamlit application
-├── requirements.txt       # Dependencies
-├── .env.example           # Environment variable template
-├── README.md              # This file
+qsar-assistant/
+├── .github/
+│   └── workflows/
+│       └── ci.yml         # GitHub Actions CI configuration
+├── src/
+│   └── qsar_assistant/    # Main package source code
+│       ├── __init__.py
+│       ├── app.py         # Main Streamlit application logic
+│       ├── cli.py         # Command-line entry point script
+│       ├── components/    # UI component modules
+│       │   ├── __init__.py
+│       │   ├── search.py
+│       │   └── results.py
+│       └── utils/         # Utility modules
+│           ├── __init__.py
+│           ├── data_formatter.py
+│           ├── llm_utils.py
+│           ├── prompts.yaml # Externalized LLM prompts
+│           └── qsar_api.py  # QSAR Toolbox API client logic
+├── tests/                 # Test suite
+│   ├── __init__.py
+│   ├── test_app.py
+│   ├── test_api_behavior.py
+│   ├── test_data_formatter.py
+│   ├── test_integration.py
+│   ├── test_llm_utils.py
+│   └── test_qsar_api.py
+├── .env.example           # Example environment variables
+├── .gitignore             # Git ignore rules
 ├── CONTRIBUTING.md        # Contribution guidelines
-├── LICENSE                # MIT License
-├── components/            # UI parts
-│   ├── search.py
-│   └── results.py
-├── utils/                 # Backend logic
-│   ├── qsar_api.py        # Client for the QSAR Toolbox Web API <--- Core Dependency
-│   ├── llm_utils.py       # AI Agent logic (LangChain/OpenAI)
-│   ├── data_formatter.py  # Data cleaning
-│   └── prompts.yaml       # AI Agent prompts
-└── tests/                 # Automated tests
-    └── ...
+├── LICENSE                # Project License (MIT)
+├── pyproject.toml         # Build system & package configuration
+└── README.md              # This file
 ```
 
 ## Contributing
 
-We welcome contributions! Please see `CONTRIBUTING.md` for guidelines. Note that running tests related to `qsar_api.py` might require the QSAR Toolbox setup outlined above, although many tests use mocking.
+We welcome contributions! Please see `CONTRIBUTING.md` for guidelines. Note that development and running tests involving direct API interaction requires the QSAR Toolbox setup described above.
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details. The OECD QSAR Toolbox has its own separate license agreement that you must adhere to.
+This project is licensed under the MIT License. See the `LICENSE` file for details. The OECD QSAR Toolbox has its own separate license agreement that you must adhere to when installing and using it.
+
+---
+
+### Handling the HTML Workflow Diagram
+
+You're right, you **cannot directly embed and render raw HTML** like your `qsar-workflow-diagram-steps.html` file within a standard Markdown file (`README.md`) in a way that will work reliably across platforms (GitHub, PyPI, etc.). Markdown processors typically sanitize or ignore complex HTML tags for security and consistency.
+
+Here are the best ways to include your workflow diagram:
+
+1.  **Convert to an Image (Recommended):**
+    * **How:** Open the `qsar-workflow-diagram-steps.html` file in a web browser. Take a screenshot of the diagram section. Alternatively, use browser developer tools or extensions designed to capture full web pages or specific elements as images. Tools like "Save page as image" in Firefox/Chrome dev tools, or dedicated screenshot tools can work. Save it as a PNG or SVG file. **SVG is generally preferred for diagrams as it scales without losing quality.**
+    * **Add to Repo:** Place the image file (e.g., `docs/images/workflow.svg` or similar) in your repository.
+    * **Embed in README:** Use Markdown image syntax to embed it:
+        ```markdown
+        ## Workflow Overview
+
+        ![QSAR Assistant Workflow](docs/images/workflow.svg)
+        ```
+
+2.  **Link to the Hosted HTML File:**
+    * **How:** Host the `qsar-workflow-diagram-steps.html` file online. A simple way for open-source projects is using GitHub Pages associated with your repository. Create a `docs` folder, put the HTML file there, enable GitHub Pages for that folder, and get the public URL.
+    * **Add Link to README:** Add a link in the README:
+        ```markdown
+        ## Workflow Overview
+
+        A detailed step-by-step diagram of the workflow can be viewed here: [Workflow Diagram](https://yourusername.github.io/qsar-assistant/qsar-workflow-diagram-steps.html)
+        ```
+        *(Replace the URL with the actual link)*
+
+3.  **Recreate using Mermaid Syntax (Good for GitHub):**
+    * **How:** GitHub's Markdown renderer supports Mermaid syntax for creating diagrams directly in Markdown. You can recreate your flowchart using Mermaid's flowchart syntax.
+    * **Add to README:** Embed the Mermaid code block:
+        ```mermaid
+        graph TD
+            A[1. User Input <br/>(Name/SMILES, Context)] --> B(2. API Data Retrieval <br/>QSAR Toolbox API);
+            B --> C{3. Multi-Agent Analysis};
+            C --> C1[Chemical Context Agent];
+            C --> C2[Physical Properties Agent];
+            C --> C3[Environmental Fate Agent];
+            C --> C4[Profiling/Reactivity Agent];
+            C --> C5[Experimental Data Agent];
+            C --> C6[Read-Across Agent];
+            C1 --> D{4. Synthesis Agent};
+            C2 --> D;
+            C3 --> D;
+            C4 --> D;
+            C5 --> D;
+            C6 --> D;
+            D --> E[5. User Output <br/>(Report, Data Tables, Downloads)];
+        ```
+    * **Pros/Cons:** Keeps the diagram definition within the README, but might be less visually rich than your HTML version and requires learning Mermaid syntax.
+
+**Recommendation:** Converting to an **SVG image (Option 1)** is usually the most compatible and visually consistent approach for including complex diagrams in README files across different platforms.
