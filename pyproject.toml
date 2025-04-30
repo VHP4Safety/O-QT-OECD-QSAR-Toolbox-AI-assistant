@@ -29,7 +29,7 @@ dependencies = [
     "requests>=2.28.0,<3.0.0",
     "openpyxl>=3.1.0,<4.0.0", # For potential future Excel export/import
     "xlsxwriter>=3.0.0,<4.0.0", # For potential future Excel export/import
-    "openai>=1.0.0,<1.5.0", # Allow updates within 1.x.y but not 1.5.0+
+    "openai>=1.40.0,<1.5.0", # Align with langchain-openai requirement
     # Allow resolver to find compatible langchain versions
     "langchain>=0.1.20",
     "langchain-openai>=0.1.25",
