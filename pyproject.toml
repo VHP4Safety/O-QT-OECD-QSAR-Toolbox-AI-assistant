@@ -31,9 +31,8 @@ dependencies = [
     "xlsxwriter>=3.0.0,<4.0.0", # For potential future Excel export/import
     "openai>=1.0.0,<1.5.0", # Allow updates within 1.x.y but not 1.5.0+
     # pin to the first mutually-compatible trio released 2024-04-15
-    "langchain==0.1.20",
-    "langchain-openai==0.1.25",      # pulls core 0.1.53 & community 0.0.38
-    "langsmith>=0.1.17,<0.2.0",     # Explicitly pin compatible langsmith
+    "langchain>=0.1.1,<0.2.0",     # Loosen pin to allow minor updates and exclude problematic 0.1.0
+    "langchain-openai>=0.1.1,<0.2.0",      # Loosen pin to allow minor updates
     "PyYAML>=5.4,<7.0.0", # For loading prompts
 ]
 
