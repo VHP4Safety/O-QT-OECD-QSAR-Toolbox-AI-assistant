@@ -31,11 +31,9 @@ dependencies = [
     "openpyxl>=3.1.0,<4.0.0", # For potential future Excel export/import
     "xlsxwriter>=3.0.0,<4.0.0", # For potential future Excel export/import
     "openai>=1.0.0,<1.5.0", # Allow updates within 1.x.y but not 1.5.0+
-    # Use a single, known-good LangChain bundle and let it pull the
-    # matching core/community wheels. 0.1.20 is the first tag tested
-    # in CI with consistent pins (langsmith >=0.1.17,<0.2.0).
+    # pin to the first mutually-compatible trio released 2024-04-15
     "langchain==0.1.20",
-    "langchain-openai==0.1.25",   # needs core 0.1.53 / community 0.0.38
+    "langchain-openai==0.1.25",      # pulls core 0.1.53 & community 0.0.38
     "PyYAML>=5.4,<7.0.0", # For loading prompts
 ]
 
