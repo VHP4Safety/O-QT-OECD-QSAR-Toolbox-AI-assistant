@@ -30,12 +30,12 @@ dependencies = [
     "openpyxl>=3.1.0,<4.0.0", # For potential future Excel export/import
     "xlsxwriter>=3.0.0,<4.0.0", # For potential future Excel export/import
     "openai>=1.0.0,<1.5.0", # Allow updates within 1.x.y but not 1.5.0+
-    # Pin all related langchain packages to a known compatible set
-    "langchain==0.1.20",
-    "langchain-openai==0.1.25",
-    "langchain-community==0.0.38",
-    "langchain-core==0.1.53",
-    "langsmith==0.1.147",
+    # Allow resolver to find compatible langchain versions
+    "langchain>=0.1.20",
+    "langchain-openai>=0.1.25",
+    "langchain-community>=0.0.38",
+    "langchain-core>=0.1.53",
+    "langsmith>=0.1.147",
     "PyYAML>=5.4,<7.0.0", # Ensure PyYAML is present
 ]
 
