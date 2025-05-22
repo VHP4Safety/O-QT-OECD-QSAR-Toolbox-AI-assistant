@@ -70,8 +70,8 @@ def clean_response_data(data: Dict[str, Any]) -> Dict[str, Any]:
             formatted = format_calculator_result(calc)
             # Always use the original key from the API response ('LogP', 'BoilingPoint', etc.)
             # This ensures consistency regardless of the CalculatorName.
-            if formatted: # Corrected indentation
-                properties[key] = {
+            if formatted:
+                properties[formatted["name"]] = {
                     "value": formatted["value"],
                         "unit": formatted["unit"],
                         "type": formatted["type"], # Keep type from formatted result
