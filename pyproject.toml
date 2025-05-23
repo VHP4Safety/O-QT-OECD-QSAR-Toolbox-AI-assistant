@@ -10,11 +10,11 @@ authors = [
 ]
 description = "Multi-Agent Chemical Analysis using OECD QSAR Toolbox API and LLMs."
 readme = "README.md"
-license = { file="LICENSE" }
+license = { text="Apache-2.0" }
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Chemistry",
     # "Framework :: Streamlit", # Removed invalid classifier
