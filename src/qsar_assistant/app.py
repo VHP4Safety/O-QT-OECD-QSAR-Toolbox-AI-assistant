@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache 2.0
 
 import streamlit as st
 import sys
@@ -16,7 +16,10 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
 
 # Use absolute imports based on the package structure
-from qsar_assistant.utils.qsar_api import QSARToolboxAPI, QSARConnectionError, QSARTimeoutError, QSARResponseError
+from qsar_assistant.utils.qsar_api import (
+    QSARToolboxAPI, QSARConnectionError, QSARTimeoutError, QSARResponseError,
+    SearchOptions                       #  ← add this
+)
 # Import new agent functions
 from qsar_assistant.utils.llm_utils import (
     analyze_chemical_context, # Added
@@ -164,7 +167,11 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
         update_progress(0.1, "🔍 Searching for chemical...")
         try:
             if search_type == 'name':
-                search_result = api_client.search_by_name(identifier)
+                api_client.search_by_name.cache_clear() # Clear cache for this specific call
+                search_result = api_client.search_by_name(
+                    identifier,
+                    search_option=SearchOptions.EXACT_MATCH   # <- "0"
+                )
             else:
                 search_result = api_client.search_by_smiles(identifier)
 
@@ -179,27 +186,14 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
              else:
                  raise QSARTimeoutError("Maximum retries exceeded during chemical search")
 
-        selected_chemical_data = None
+        # --- Legacy selector: simply take the first record the API returns ---
         if isinstance(search_result, list):
             if not search_result:
                 raise QSARResponseError(f"Chemical not found: {identifier}")
-            
-            # Prioritize exact match
-            for chemical in search_result:
-                # Assuming 'Name' is the field containing the chemical name
-                if isinstance(chemical, dict) and chemical.get('Name', '').lower() == identifier.lower():
-                    selected_chemical_data = chemical
-                    break # Found exact match, stop searching
-                    
-            # If no exact match found, fall back to the first result
-            if selected_chemical_data is None:
-                selected_chemical_data = search_result[0]
-                st.warning(f"Exact match for '{identifier}' not found. Displaying the first search result: {selected_chemical_data.get('Name', 'Unknown Chemical')}")
-
+            selected_chemical_data = search_result[0]       # ← same as your 2024 build
         else:
-            # If search_result is not a list, assume it's a single result dictionary
-            selected_chemical_data = search_result
-            
+            selected_chemical_data = search_result          # single-dict response
+
         chemical_data = selected_chemical_data # Use the selected data
         
         chem_id = chemical_data.get('ChemId')
