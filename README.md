@@ -176,7 +176,7 @@ qsar-assistant/
 ├── .env.example           # Example environment variables
 ├── .gitignore             # Git ignore rules
 ├── CONTRIBUTING.md        # Contribution guidelines
-├── LICENSE                # Project License (MIT)
+├── LICENSE                # Project License (Apache 2.0)
 ├── pyproject.toml         # Build system & package configuration
 └── README.md              # This file
 ```
@@ -187,57 +187,4 @@ We welcome contributions! Please see `CONTRIBUTING.md` for guidelines. Note that
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details. The OECD QSAR Toolbox has its own separate license agreement that you must adhere to when installing and using it.
-
----
-
-### Handling the HTML Workflow Diagram
-
-You're right, you **cannot directly embed and render raw HTML** like your `qsar-workflow-diagram-steps.html` file within a standard Markdown file (`README.md`) in a way that will work reliably across platforms (GitHub, PyPI, etc.). Markdown processors typically sanitize or ignore complex HTML tags for security and consistency.
-
-Here are the best ways to include your workflow diagram:
-
-1.  **Convert to an Image (Recommended):**
-    * **How:** Open the `qsar-workflow-diagram-steps.html` file in a web browser. Take a screenshot of the diagram section. Alternatively, use browser developer tools or extensions designed to capture full web pages or specific elements as images. Tools like "Save page as image" in Firefox/Chrome dev tools, or dedicated screenshot tools can work. Save it as a PNG or SVG file. **SVG is generally preferred for diagrams as it scales without losing quality.**
-    * **Add to Repo:** Place the image file (e.g., `docs/images/workflow.svg` or similar) in your repository.
-    * **Embed in README:** Use Markdown image syntax to embed it:
-        ```markdown
-        ## Workflow Overview
-
-        ![QSAR Assistant Workflow](docs/images/workflow.svg)
-        ```
-
-2.  **Link to the Hosted HTML File:**
-    * **How:** Host the `qsar-workflow-diagram-steps.html` file online. A simple way for open-source projects is using GitHub Pages associated with your repository. Create a `docs` folder, put the HTML file there, enable GitHub Pages for that folder, and get the public URL.
-    * **Add Link to README:** Add a link in the README:
-        ```markdown
-        ## Workflow Overview
-
-        A detailed step-by-step diagram of the workflow can be viewed here: [Workflow Diagram](https://yourusername.github.io/qsar-assistant/qsar-workflow-diagram-steps.html)
-        ```
-        *(Replace the URL with the actual link)*
-
-3.  **Recreate using Mermaid Syntax (Good for GitHub):**
-    * **How:** GitHub's Markdown renderer supports Mermaid syntax for creating diagrams directly in Markdown. You can recreate your flowchart using Mermaid's flowchart syntax.
-    * **Add to README:** Embed the Mermaid code block:
-        ```mermaid
-        graph TD
-            A[1. User Input <br/>(Name/SMILES, Context)] --> B(2. API Data Retrieval <br/>QSAR Toolbox API);
-            B --> C{3. Multi-Agent Analysis};
-            C --> C1[Chemical Context Agent];
-            C --> C2[Physical Properties Agent];
-            C --> C3[Environmental Fate Agent];
-            C --> C4[Profiling/Reactivity Agent];
-            C --> C5[Experimental Data Agent];
-            C --> C6[Read-Across Agent];
-            C1 --> D{4. Synthesis Agent};
-            C2 --> D;
-            C3 --> D;
-            C4 --> D;
-            C5 --> D;
-            C6 --> D;
-            D --> E[5. User Output <br/>(Report, Data Tables, Downloads)];
-        ```
-    * **Pros/Cons:** Keeps the diagram definition within the README, but might be less visually rich than your HTML version and requires learning Mermaid syntax.
-
-**Recommendation:** Converting to an **SVG image (Option 1)** is usually the most compatible and visually consistent approach for including complex diagrams in README files across different platforms.
+This project is licensed under the Apache License, Version 2.0. See the `LICENSE` file for details. The OECD QSAR Toolbox has its own separate license agreement that you must adhere to when installing and using it.
