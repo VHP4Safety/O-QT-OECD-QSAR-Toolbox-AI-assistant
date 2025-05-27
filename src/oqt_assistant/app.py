@@ -260,7 +260,7 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
 async def main():
     st.set_page_config(
         page_title="QSAR Toolbox Assistant",
-        page_icon="🧪",
+        page_icon="logo.png",
         layout="wide"
     )
 
@@ -270,7 +270,7 @@ async def main():
     st.markdown("Multi-Agent Chemical Analysis, Hazard Assessment and Read-Across recommendations")
 
     # Display the logo
-    st.image("o'qt logo.png", use_container_width=True) # Use container width
+    st.image("logo.png", use_container_width=True) # Use container width
 
     api_url = os.getenv('QSAR_TOOLBOX_API_URL', 'Not set')
     st.sidebar.info(f"API URL: {api_url}")
