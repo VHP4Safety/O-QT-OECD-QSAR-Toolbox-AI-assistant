@@ -1,4 +1,4 @@
-name: O'QT: The OECD QSAR Toolbox AI Assistant CI
+name: 'O''QT: The OECD QSAR Toolbox AI Assistant CI'
 
 on: [push, pull_request] # Triggers on pushes and pull requests
 
