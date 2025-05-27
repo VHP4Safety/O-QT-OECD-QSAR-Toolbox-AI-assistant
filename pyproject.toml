@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "qsar-assistant"
+name = "oqt-assistant"
 version = "0.9.0"
 authors = [
     { name="Ivo Djidrovski", email="i.djidrovski@uu.nl" },
@@ -46,7 +46,7 @@ Issues = "https://github.com/placeholder/qsar-assistant/issues"
 
 [project.scripts]
 # Defines the command-line script entry point
-qsar-assistant = "qsar_assistant.cli:main"
+oqt-assistant = "oqt_assistant.cli:main"
 
 [project.optional-dependencies]
 # Dependencies for development and testing
@@ -76,10 +76,10 @@ asyncio_mode = "auto"
 
 [tool.coverage.run]
 # Configure coverage.py when run via pytest-cov
-source = ["qsar_assistant"] # Measure coverage for the main package
+source = ["oqt_assistant"] # Measure coverage for the main package
 branch = true # Measure branch coverage
 # omit = [ # Optional: exclude files/directories from coverage
-#     "src/qsar_assistant/__main__.py",
+#     "src/oqt_assistant/__main__.py",
 # ]
 
 [tool.coverage.report]

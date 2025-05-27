@@ -1,6 +1,6 @@
-# Contributing to QSAR Toolbox Assistant
+# Contributing to O'QT: The OECD QSAR Toolbox AI Assistant
 
-Thank you for considering contributing to QSAR Toolbox Assistant! This document provides guidelines and instructions for contributing.
+Thank you for considering contributing to O'QT: The OECD QSAR Toolbox AI Assistant! This document provides guidelines and instructions for contributing.
 
 ## Ways to Contribute
 

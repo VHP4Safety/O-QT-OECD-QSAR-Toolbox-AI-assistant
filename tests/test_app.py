@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache 2.0
 
 # tests/test_app.py
 import pytest
@@ -12,7 +12,7 @@ import streamlit as st # Needed for session_state mocking if testing functions d
 
 # Example: Unit test a helper function
 # Assuming app.py is importable. Adjust if necessary.
-from qsar_assistant.app import initialize_session_state # [cite: 25]
+from oqt_assistant.app import initialize_session_state # [cite: 25]
 
 def test_initialize_session_state_defaults():
     """Test that session state gets default values"""
@@ -32,14 +32,14 @@ def test_initialize_session_state_defaults():
 # Example: Integration-style test for the main analysis function (simplified)
 # This requires mocking API and LLM calls made within perform_chemical_analysis and the main async flow
 # Adjust patch targets based on actual imports in app.py
-@patch('qsar_assistant.app.perform_chemical_analysis') # Mock the data fetching part [cite: 34]
-@patch('qsar_assistant.app.analyze_chemical_context', new_callable=AsyncMock) # [cite: 51, 212]
-@patch('qsar_assistant.app.analyze_physical_properties', new_callable=AsyncMock) # [cite: 55, 216]
-@patch('qsar_assistant.app.analyze_environmental_fate', new_callable=AsyncMock) # [cite: 55, 218]
-@patch('qsar_assistant.app.analyze_profiling_reactivity', new_callable=AsyncMock) # [cite: 55, 220]
-@patch('qsar_assistant.app.analyze_experimental_data', new_callable=AsyncMock) # [cite: 55, 222]
-@patch('qsar_assistant.app.analyze_read_across', new_callable=AsyncMock) # [cite: 60, 225]
-@patch('qsar_assistant.app.synthesize_report', new_callable=AsyncMock) # [cite: 61, 229]
+@patch('oqt_assistant.app.perform_chemical_analysis') # Mock the data fetching part [cite: 34]
+@patch('oqt_assistant.app.analyze_chemical_context', new_callable=AsyncMock) # [cite: 51, 212]
+@patch('oqt_assistant.app.analyze_physical_properties', new_callable=AsyncMock) # [cite: 55, 216]
+@patch('oqt_assistant.app.analyze_environmental_fate', new_callable=AsyncMock) # [cite: 55, 218]
+@patch('oqt_assistant.app.analyze_profiling_reactivity', new_callable=AsyncMock) # [cite: 55, 220]
+@patch('oqt_assistant.app.analyze_experimental_data', new_callable=AsyncMock) # [cite: 55, 222]
+@patch('oqt_assistant.app.analyze_read_across', new_callable=AsyncMock) # [cite: 60, 225]
+@patch('oqt_assistant.app.synthesize_report', new_callable=AsyncMock) # [cite: 61, 229]
 @pytest.mark.asyncio
 async def test_main_analysis_flow(
     mock_synthesize, mock_read_across, mock_exp, mock_prof, mock_env, mock_phys, mock_context, mock_perform_analysis

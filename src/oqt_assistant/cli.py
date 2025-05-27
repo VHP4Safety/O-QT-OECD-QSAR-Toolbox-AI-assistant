@@ -11,8 +11,8 @@ def main():
     """Runs the Streamlit application."""
     # Find the path to app.py within the installed package
     try:
-        # Assuming cli.py is in src/qsar_assistant/cli.py
-        # and app.py will be in src/qsar_assistant/app.py
+        # Assuming cli.py is in src/oqt_assistant/cli.py
+        # and app.py will be in src/oqt_assistant/app.py
         app_path = Path(__file__).parent / "app.py"
         if not app_path.exists():
              # This check might be redundant if installation places it correctly,

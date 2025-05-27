@@ -2,4 +2,4 @@
 #
 # SPDX-License-Identifier: MIT
 
-# This file marks the qsar_assistant directory as a Python package.
+# This file marks the oqt_assistant directory as a Python package.

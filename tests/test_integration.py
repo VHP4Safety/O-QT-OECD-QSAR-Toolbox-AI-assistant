@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache 2.0
 
 """
 Integration tests for streamlined_qsar_app.
@@ -18,20 +18,20 @@ class TestIntegration:
     """Integration tests for the application."""
 
     @pytest.mark.asyncio
-    @patch('qsar_assistant.utils.llm_utils.get_llm')
+    @patch('oqt_assistant.utils.llm_utils.get_llm')
     async def test_app_imports(self, mock_get_llm):
         """Test that the app imports work correctly."""
         # Mock the get_llm function to avoid needing API keys
         mock_get_llm.return_value = MagicMock()
         
         # Test app imports
-        import qsar_assistant.app
-        assert hasattr(qsar_assistant.app, 'main')
-        assert hasattr(qsar_assistant.app, 'perform_chemical_analysis')
-        assert hasattr(qsar_assistant.app, 'update_progress')
+        import oqt_assistant.app
+        assert hasattr(oqt_assistant.app, 'main')
+        assert hasattr(oqt_assistant.app, 'perform_chemical_analysis')
+        assert hasattr(oqt_assistant.app, 'update_progress')
     
     @pytest.mark.asyncio
-    @patch('qsar_assistant.utils.llm_utils.get_llm')
+    @patch('oqt_assistant.utils.llm_utils.get_llm')
     async def test_initialize_session_state(self, mock_get_llm):
         """Test that session state initialization works correctly."""
         # Mock the get_llm function to avoid needing API keys
@@ -39,7 +39,7 @@ class TestIntegration:
         
         # Import streamlit and session state initialization
         import streamlit as st
-        from qsar_assistant.app import initialize_session_state
+        from oqt_assistant.app import initialize_session_state
         
         # Reset session state
         for key in list(st.session_state.keys()):
@@ -74,7 +74,7 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_data_formatter_integration(self):
         """Test that data formatter functions work together correctly."""
-        from qsar_assistant.utils.data_formatter import format_chemical_data, format_calculator_result, clean_response_data
+        from oqt_assistant.utils.data_formatter import format_chemical_data, format_calculator_result, clean_response_data
         
         # Create test data
         test_data = {

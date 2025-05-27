@@ -1,4 +1,4 @@
-# 🧪 OECD QSAR Toolbox Assistant
+# 🧪 O'QT: The OECD QSAR Toolbox AI Assistant
 
 **Analyze chemicals, assess hazards, and get Read-Across recommendations using a powerful multi-agent AI system connected to the OECD QSAR Toolbox.**
 

@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache 2.0
 
 # tests/test_llm_utils.py
 import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 # Import the module itself for cache clearing
-from qsar_assistant.utils import llm_utils
+from oqt_assistant.utils import llm_utils
 # Import the agent functions directly
-from qsar_assistant.utils.llm_utils import (
+from oqt_assistant.utils.llm_utils import (
     analyze_physical_properties,
     synthesize_report,
     analyze_chemical_context,

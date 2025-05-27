@@ -16,12 +16,12 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
 
 # Use absolute imports based on the package structure
-from qsar_assistant.utils.qsar_api import (
+from oqt_assistant.utils.qsar_api import (
     QSARToolboxAPI, QSARConnectionError, QSARTimeoutError, QSARResponseError,
     SearchOptions                       #  ← add this [cite: 7]
 )
 # Import new agent functions
-from qsar_assistant.utils.llm_utils import (
+from oqt_assistant.utils.llm_utils import (
     analyze_chemical_context, # Added
     analyze_physical_properties,
     analyze_environmental_fate,
@@ -30,8 +30,8 @@ from qsar_assistant.utils.llm_utils import (
     analyze_read_across, # Added
     synthesize_report
 )
-from qsar_assistant.components.search import render_search_section
-from qsar_assistant.components.results import render_results_section, render_download_section # Keep render_download_section for raw data
+from oqt_assistant.components.search import render_search_section
+from oqt_assistant.components.results import render_results_section, render_download_section # Keep render_download_section for raw data
 
 # Define the maximum number of experimental records to send to LLM agents
 MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA = 500
@@ -266,8 +266,11 @@ async def main():
 
     initialize_session_state()
 
-    st.title("🧪OECD QSAR Toolbox Assistant")
+    st.title("🧪O'QT: The OECD QSAR Toolbox AI Assistant")
     st.markdown("Multi-Agent Chemical Analysis, Hazard Assessment and Read-Across recommendations")
+
+    # Display the logo
+    st.image("o'qt logo.png", use_container_width=True) # Use container width
 
     api_url = os.getenv('QSAR_TOOLBOX_API_URL', 'Not set')
     st.sidebar.info(f"API URL: {api_url}")
