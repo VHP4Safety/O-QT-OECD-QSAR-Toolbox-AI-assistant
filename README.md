@@ -50,6 +50,17 @@ Therefore, **manual installation and API activation by each user on a Windows ma
 
 Follow these steps carefully:
 
+**Environment Setup Options:**
+
+You have two main ways to set up and run the O'QT Assistant:
+
+1.  **Direct Python Installation (Recommended for most users):** Install and run the assistant directly on your machine (Windows, macOS, or Linux). This requires Python and manual configuration of environment variables.
+2.  **Docker Container (Advanced):** Run the assistant inside a Docker container. This simplifies dependency management for the assistant itself but still requires the OECD QSAR Toolbox to be running separately on a Windows host.
+
+Choose the setup method that best suits your environment and technical comfort.
+
+---
+
 **Phase 1: Install and Configure the OECD QSAR Toolbox (on Windows)**
 
 *(This only needs to be done once. This step is MANDATORY)*
@@ -107,16 +118,68 @@ Follow these steps carefully:
         ```
         *Make sure the `QSAR_TOOLBOX_API_URL` points correctly to where your QSAR Toolbox API is running.*
 
+---
+
+**Phase 2b: Setup using Docker (Alternative to Phase 2)**
+
+This method is for users who prefer to run the O'QT Assistant application within a Docker container. **You still need to complete Phase 1 (installing and running the OECD QSAR Toolbox on a Windows machine) first.**
+
+1.  **Install Docker:** Ensure Docker Desktop (or Docker Engine on Linux) is installed and running on your machine (this can be Windows, macOS, or Linux).
+2.  **Get the Dockerfile:**
+    *   If you've cloned the repository, the `Dockerfile` is in the project root.
+    *   If you installed via `pip`, you'll need to create a `Dockerfile` manually or download it from the project's repository.
+3.  **Create `.env` file:** Create an `.env` file in the same directory as your `Dockerfile`. This file will provide environment variables to the Docker container.
+    ```dotenv
+    # Your OpenAI API Key for the AI agents
+    OPENAI_API_KEY=sk-YourActualOpenAIKeyHere
+
+    # *** THIS IS THE MOST IMPORTANT SETTING ***
+    # Set the URL for YOUR running QSAR Toolbox API (from Phase 1)
+    # This MUST be accessible from your Docker container.
+    # If Docker is running on the same machine as the Toolbox (Windows),
+    # you might use 'host.docker.internal' instead of 'localhost'.
+    # Example: QSAR_TOOLBOX_API_URL=http://host.docker.internal:5000/api
+    #
+    # If the Toolbox is on a different machine in your network, use its IP address.
+    # Example: QSAR_TOOLBOX_API_URL=http://192.168.1.105:5000/api
+    QSAR_TOOLBOX_API_URL=http://your_qsar_toolbox_api_url_here/api
+    ```
+    **Important for `QSAR_TOOLBOX_API_URL` in Docker:**
+    *   `localhost` inside a Docker container refers to the container itself, not your host machine.
+    *   If the QSAR Toolbox is running on the same machine as Docker:
+        *   **Windows/macOS (Docker Desktop):** Use `host.docker.internal` as the hostname (e.g., `http://host.docker.internal:5000/api`).
+        *   **Linux:** You might need to use your host's actual IP address on the Docker bridge network (e.g., `http://172.17.0.1:5000/api`) or run the container with `--network="host"`.
+    *   If the QSAR Toolbox is on a different machine, use that machine's network IP address.
+4.  **Build the Docker Image:** Open a terminal in the directory containing the `Dockerfile` and `.env` file.
+    ```bash
+    docker build -t oqt-assistant-app .
+    ```
+5.  **Run the Docker Container:**
+    ```bash
+    docker run -p 8501:8501 --env-file .env oqt-assistant-app
+    ```
+    *   `-p 8501:8501`: Maps port 8501 on your host to port 8501 in the container (Streamlit's default).
+    *   `--env-file .env`: Loads environment variables from your `.env` file into the container.
+
+---
+
 **Phase 3: Run the QSAR Assistant**
 
 1.  **Ensure Toolbox is Running:** Double-check that the OECD QSAR Toolbox is running on the Windows machine and its Web API is active (Phase 1, step 6).
-2.  **Activate Environment:** If you created a virtual environment, make sure it's activated.
-3.  **Run the App:** Open your terminal or command prompt and run:
-    ```bash
-    qsar-assistant
-    ```
-4.  **Access in Browser:** Open your web browser and go to the local URL provided (usually `http://localhost:8501`).
-5.  **Check Connection:** The sidebar in the application should show "✅ Connected to QSAR Toolbox". If it shows an error, double-check the Toolbox is running, the API is enabled, and the `QSAR_TOOLBOX_API_URL` in your `.env` file is correct and reachable.
+2.  **Run the Assistant:**
+    *   **If using Direct Python Installation (Phase 2):**
+        *   Activate your virtual environment (if you created one).
+        *   Open your terminal or command prompt and run:
+            ```bash
+            oqt-assistant
+            ```
+    *   **If using Docker (Phase 2b):**
+        *   Ensure your Docker container is running (from `docker run` command in Phase 2b, step 5).
+3.  **Access in Browser:** Open your web browser and go to `http://localhost:8501`.
+4.  **Check Connection:** The sidebar in the application should show "✅ Connected to QSAR Toolbox". If it shows an error:
+    *   Double-check the Toolbox is running and the API is enabled.
+    *   Verify the `QSAR_TOOLBOX_API_URL` in your `.env` file is correct and reachable from where the assistant is running (your machine or the Docker container).
+    *   If using Docker, ensure network connectivity between the container and the Toolbox host.
 
 ## How to Use the Assistant
 

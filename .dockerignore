@@ -1,0 +1,42 @@
+# Ignore virtual environments
+.venv
+venv
+ENV
+env
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Ignore Git files
+.git/
+.gitignore
+
+# Ignore editor and OS-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Ignore test reports and coverage data
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Ignore log files
+logs/
+*.log
+
+# Ignore environment files (if not needed in the image)
+.env
+.env.*
