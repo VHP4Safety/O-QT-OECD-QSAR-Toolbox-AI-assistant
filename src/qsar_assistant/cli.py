@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache 2.0
 
 import subprocess
 import sys
@@ -28,7 +28,7 @@ def main():
 
         print(f"Running command: {' '.join(command)}")
         # Use check=True to raise CalledProcessError if Streamlit fails
-        subprocess.run(command, check=True, cwd=Path(__file__).parent.parent.parent) # Run from project root
+        subprocess.run(command, check=True) # Run from project root
 
     except FileNotFoundError as e:
          print(f"Error: {e}", file=sys.stderr)
