@@ -7,6 +7,10 @@ WORKDIR /app
 # Copy the pyproject.toml and the source code into the container
 COPY pyproject.toml .
 COPY src/ ./src/
+COPY LICENSE .
+COPY README.md .
+COPY logo.png /app/src/oqt_assistant/logo.png
+COPY logo.png /app/logo.png
 
 # Install the project and its dependencies
 # The --no-cache-dir flag is used to prevent pip from caching packages,
