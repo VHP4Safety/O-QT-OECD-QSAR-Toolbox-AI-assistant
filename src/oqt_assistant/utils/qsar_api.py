@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache 2.0
 
 """
 Streamlined QSAR Toolbox API client
