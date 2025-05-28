@@ -122,7 +122,7 @@ def get_llm():
         temperature=0.7,
         openai_api_key=api_key,
         max_retries=3,
-        request_timeout=60.0
+        request_timeout=120.0
     )
 
 output_parser = StrOutputParser()
