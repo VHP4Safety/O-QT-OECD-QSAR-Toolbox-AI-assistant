@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any, List, Union
 import urllib.parse
 import json
 import logging
+import time
 from functools import lru_cache
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -38,16 +39,18 @@ class SearchOptions:
     CONTAINS = "2"
 
 class QSARToolboxAPI:
-    def __init__(self, base_url: str, timeout: Union[int, tuple] = (5, 30), max_retries: int = 3):
+    def __init__(self, base_url: str, timeout: Union[int, tuple] = (5, 30), max_retries: int = 10):
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
+        self.max_retries = max_retries
         
         # Configure session with retries
         self.session = requests.Session()
         retry_strategy = Retry(
             total=max_retries,
-            backoff_factor=0.5,
+            backoff_factor=1.0,  # Increased backoff factor
             status_forcelist=[500, 502, 503, 504],
+            raise_on_status=False  # Don't raise immediately, let us handle retries
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("http://", adapter)
@@ -88,6 +91,100 @@ class QSARToolboxAPI:
             raise QSARConnectionError(f"Failed to connect to QSAR Toolbox API: {str(e)}")
         except requests.exceptions.RequestException as e:
             raise QSARResponseError(f"Request failed: {str(e)}")
+
+    def _make_request_with_robust_retry(self, endpoint: str, method: str = 'GET', params: Dict = None, data: Dict = None, max_retries: int = None) -> Any:
+        """Make request with robust retry mechanism specifically for 500 errors"""
+        if max_retries is None:
+            max_retries = self.max_retries
+            
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        logger.info(f"Making {method} request to: {url} with robust retry (max_retries={max_retries})")
+        
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                logger.debug(f"Attempt {attempt + 1}/{max_retries + 1} for {url}")
+                
+                response = self.session.request(
+                    method=method,
+                    url=url,
+                    params=params,
+                    json=data if data else None,
+                    timeout=self.timeout
+                )
+                
+                logger.debug(f"Response status: {response.status_code}")
+                
+                # If we get a successful response, process it
+                if response.ok:
+                    if not response.content:
+                        return None
+                    
+                    result = response.json()
+                    logger.info(f"Successfully retrieved data after {attempt + 1} attempts")
+                    
+                    # Handle the specific case for calculator results
+                    if 'calculation/all/' in endpoint:
+                        if isinstance(result, list):
+                            # Convert list of calculator results to a dictionary
+                            return {
+                                str(i): calc_result
+                                for i, calc_result in enumerate(result)
+                            } if result else {}
+                        return result or {}
+                    
+                    return result
+                
+                # Handle 500 errors with exponential backoff
+                elif response.status_code == 500:
+                    if attempt < max_retries:
+                        wait_time = min(2 ** attempt, 30)  # Exponential backoff, max 30 seconds
+                        logger.warning(f"Got 500 error on attempt {attempt + 1}, waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise QSARResponseError(f"API returned status 500 after {max_retries + 1} attempts: {response.text}")
+                
+                # Handle other HTTP errors
+                else:
+                    raise QSARResponseError(f"API returned status {response.status_code}: {response.text}")
+                    
+            except requests.exceptions.Timeout as e:
+                last_exception = QSARTimeoutError(f"Request timed out on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries:
+                    wait_time = min(2 ** attempt, 30)
+                    logger.warning(f"Timeout on attempt {attempt + 1}, waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise last_exception
+                    
+            except requests.exceptions.ConnectionError as e:
+                last_exception = QSARConnectionError(f"Connection failed on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries:
+                    wait_time = min(2 ** attempt, 30)
+                    logger.warning(f"Connection error on attempt {attempt + 1}, waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise last_exception
+                    
+            except requests.exceptions.RequestException as e:
+                last_exception = QSARResponseError(f"Request failed on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries:
+                    wait_time = min(2 ** attempt, 30)
+                    logger.warning(f"Request error on attempt {attempt + 1}, waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise last_exception
+        
+        # If we get here, all retries failed
+        if last_exception:
+            raise last_exception
+        else:
+            raise QSARResponseError(f"All {max_retries + 1} attempts failed for unknown reasons")
 
     def get_version(self) -> Dict[str, Any]:
         """Get API version information"""
@@ -149,24 +246,8 @@ class QSARToolboxAPI:
 
     @lru_cache(maxsize=32)
     def apply_all_calculators(self, chem_id: str) -> Dict[str, Any]:
-        """Apply all calculators to a chemical with a shorter timeout"""
-        # Use shorter timeout for calculator operations to prevent hanging
-        original_timeout = self.timeout
-        calc_timeout = (5, 30)  # 5s connect, 30s read timeout
-        
-        try:
-            self.timeout = calc_timeout
-            result = self._make_request(f'calculation/all/{chem_id}')
-            if isinstance(result, list):
-                # Convert list of calculator results to a dictionary
-                return {
-                    str(i): calc_result
-                    for i, calc_result in enumerate(result)
-                } if result else {}
-            return result or {}
-        finally:
-            # Restore original timeout
-            self.timeout = original_timeout
+        """Apply all calculators to a chemical with robust retry mechanism for 500 errors"""
+        return self._make_request_with_robust_retry(f'calculation/all/{chem_id}', max_retries=8)
 
     def get_profilers(self) -> Dict[str, Any]:
         """Get all available profilers"""
@@ -229,26 +310,9 @@ class QSARToolboxAPI:
             # Use the "No metabolism" simulator by default
             default_simulator_guid = "00000000-0000-0000-0000-000000000000"
             
-            # First try the /all endpoint with a shorter timeout
-            short_timeout = (5, 15)  # Much shorter timeout for this problematic endpoint
-            original_timeout = self.timeout
+            # Skip the problematic /all endpoint and go directly to individual profilers
+            logger.info(f"Skipping profiling/all endpoint due to timeout issues, using individual profilers")
             all_results = None
-            
-            try:
-                # Temporarily set a shorter timeout for this specific call
-                self.timeout = short_timeout
-                logger.info(f"Attempting to use the profiling/all/{chem_id} endpoint with shorter timeout {short_timeout}")
-                
-                try:
-                    # This endpoint should profile the chemical with all available profilers
-                    all_results = self._make_request(f'profiling/all/{chem_id}')
-                    if all_results:
-                        logger.info(f"Successfully got profiling results for all profilers")
-                except Exception as e:
-                    logger.warning(f"Could not profile with all profilers at once: {str(e)}")
-            finally:
-                # Restore original timeout for subsequent calls
-                self.timeout = original_timeout
             
             # Extract profiler information for display
             profiler_list = []
@@ -295,7 +359,7 @@ class QSARToolboxAPI:
             attempts = 0
             max_attempts = 80  # Set high to try all profilers
             
-            # List of PROVEN fast profilers (based on actual testing)
+            # List of PROVEN fast profilers (optimized balance of speed vs coverage)
             fast_profilers = [
                 # These profilers respond in under 5 seconds consistently
                 "DNA binding by OASIS",
@@ -307,7 +371,10 @@ class QSARToolboxAPI:
                 "Substance type",
                 "Acute aquatic toxicity classification by Verhaar",
                 "Aquatic toxicity classification by ECOSAR",
-                "Organic functional groups"
+                "Organic functional groups",
+                "Organic functional groups (nested)",
+                "Organic functional groups (US EPA)",
+                "Organic functional groups, Norbert Haider (checkmol)"
             ]
             
             # Simple approach: try only proven fast profilers with a reasonable timeout

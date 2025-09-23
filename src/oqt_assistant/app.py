@@ -51,7 +51,7 @@ def initialize_session_state():
         'progress_value': 0.0, # [cite: 9]
         'progress_description': '', # [cite: 9]
         'retry_count': 0, # [cite: 9]
-        'max_retries': 3, # [cite: 9]
+        'max_retries': 15, # Increased for better handling of 500 errors
         'download_clicked': False # Keep for raw data downloads # [cite: 9]
     }
 
@@ -160,7 +160,7 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
         api_client = QSARToolboxAPI(
             base_url=api_url,
             timeout=(10, 120),
-            max_retries=st.session_state.max_retries
+            max_retries=15  # Use higher retry count for better reliability
         ) # [cite: 19]
 
         st.write(f"Connecting to API at: {api_url}") # [cite: 19]
