@@ -90,6 +90,24 @@ def render_results_section(results: Dict[str, Any], identifier_display: str):
         if cleaned_results["experimental_data"]:
             exp_df = pd.DataFrame(cleaned_results["experimental_data"])
             
+            # Fix PyArrow serialization issue by ensuring consistent data types
+            if 'Value' in exp_df.columns:
+                # Convert all values in Value column to strings to avoid mixed type issues
+                exp_df['Value'] = exp_df['Value'].astype(str)
+            
+            # Convert any remaining numeric columns that might have mixed types
+            for col in exp_df.columns:
+                if exp_df[col].dtype == 'object':
+                    try:
+                        # Try to convert to numeric, if fails keep as string
+                        exp_df[col] = pd.to_numeric(exp_df[col], errors='ignore')
+                        # If still object type, convert to string to ensure consistency
+                        if exp_df[col].dtype == 'object':
+                            exp_df[col] = exp_df[col].astype(str)
+                    except Exception:
+                        # Fallback: convert to string
+                        exp_df[col] = exp_df[col].astype(str)
+            
             # --- Pagination Logic ---
             items_per_page = 15  # Number of rows per page
             total_items = len(exp_df)

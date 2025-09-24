@@ -104,7 +104,7 @@ def get_prompt(key: str, prompt_type: str = "system") -> str:
 
 # --- LLM Initialization (keep as is) ---
 @lru_cache() # Add this line
-def get_llm():
+def get_llm(timeout: float = 120.0):
     """Initializes and returns the LangChain ChatOpenAI instance."""
     api_key = os.getenv('OPENAI_API_KEY')
     if not api_key:
@@ -122,7 +122,7 @@ def get_llm():
         temperature=0.7,
         openai_api_key=api_key,
         max_retries=3,
-        request_timeout=120.0
+        request_timeout=timeout
     )
 
 output_parser = StrOutputParser()
@@ -255,31 +255,95 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str) -> str:
 # --- Read Across Agent ---
 @async_lru_cache(maxsize=128)
 async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[str], context: str) -> str:
-    """Analyzes data gaps and suggests read-across strategy using an LLM agent.""" # [cite: 295]
-    try:
-        results_json = safe_json(results)
-        specialist_outputs_text = "\n\n---\n\n".join(specialist_outputs)
+    """Analyzes data gaps and suggests read-across strategy using an LLM agent with robust timeout handling."""
+    
+    # Implement progressive timeout strategy with fallback
+    timeout_strategies = [
+        {"timeout": 180.0, "description": "Extended timeout (3 minutes)"},
+        {"timeout": 300.0, "description": "Long timeout (5 minutes)"},
+    ]
+    
+    for strategy in timeout_strategies:
+        try:
+            print(f"Attempting Read Across analysis with {strategy['description']}")
+            
+            # Prepare data - truncate if too large to reduce processing time
+            results_json = safe_json(results)
+            specialist_outputs_text = "\n\n---\n\n".join(specialist_outputs)
+            
+            # Limit input size to prevent timeouts - truncate if necessary
+            max_chars = 25000  # Reasonable limit for LLM processing
+            if len(results_json) > max_chars:
+                results_json = results_json[:max_chars] + "\n\n[NOTE: Results data truncated to prevent timeout]"
+                print(f"Truncated results_json to {max_chars} characters to prevent timeout")
+            
+            if len(specialist_outputs_text) > max_chars:
+                specialist_outputs_text = specialist_outputs_text[:max_chars] + "\n\n[NOTE: Specialist outputs truncated to prevent timeout]"
+                print(f"Truncated specialist_outputs_text to {max_chars} characters to prevent timeout")
 
-        # Get prompts from loaded YAML data
-        system_prompt = get_prompt("read_across", "system")
-        user_template = get_prompt("read_across", "user")
+            # Get prompts from loaded YAML data
+            system_prompt = get_prompt("read_across", "system")
+            user_template = get_prompt("read_across", "user")
 
-        prompt_template = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", user_template) # [cite: 296]
-        ])
-        chain = prompt_template | get_llm() | output_parser # [cite: 297]
-        input_dict = {
-            "context": context,
-            "results_json": results_json,
-            "specialist_outputs_text": specialist_outputs_text
-        }
-        response = await chain.ainvoke(input_dict)
-        return response
-    except Exception as e:
-        error_msg = f"Error in Read Across Agent: {str(e)}"
-        print(error_msg) # [cite: 298]
-        return error_msg # Return error message string
+            prompt_template = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", user_template)
+            ])
+            
+            # Use custom timeout for this agent
+            chain = prompt_template | get_llm(timeout=strategy["timeout"]) | output_parser
+            
+            input_dict = {
+                "context": context,
+                "results_json": results_json,
+                "specialist_outputs_text": specialist_outputs_text
+            }
+            
+            # Add asyncio timeout as additional protection
+            response = await asyncio.wait_for(
+                chain.ainvoke(input_dict), 
+                timeout=strategy["timeout"] + 30  # Extra buffer
+            )
+            
+            print(f"Read Across analysis completed successfully with {strategy['description']}")
+            return response
+            
+        except asyncio.TimeoutError:
+            error_msg = f"Read Across Agent timed out after {strategy['timeout']} seconds"
+            print(f"Warning: {error_msg}")
+            continue  # Try next strategy
+            
+        except Exception as e:
+            error_msg = f"Read Across Agent failed with {strategy['description']}: {str(e)}"
+            print(f"Warning: {error_msg}")
+            
+            # If this is a timeout-related error, try next strategy
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                continue
+            else:
+                # For non-timeout errors, don't continue trying
+                break
+    
+    # If all strategies failed, return a meaningful fallback response
+    fallback_response = """
+    Error in Read Across Agent: Request timed out.
+    
+    No read-across analysis could be provided due to a timeout error. If read-across or analog data are required for this assessment, it is recommended to rerun the read-across analysis or provide additional input on suitable analogues.
+    
+    **Potential Solutions:**
+    - Try running the analysis again with a smaller dataset
+    - Consider using a more focused chemical search
+    - Manually identify similar chemicals for read-across analysis
+    - Consult QSAR Toolbox desktop application for comprehensive read-across workflows
+    
+    **Alternative Approaches:**
+    - Use category-based read-across based on the profiling results
+    - Apply trend analysis using similar chemicals within the same structural class
+    - Consider mechanism-based grouping for toxicity assessment
+    """
+    
+    print("All timeout strategies exhausted, returning fallback response")
+    return fallback_response
 
 # --- Synthesizer Agent ---
 @async_lru_cache(maxsize=128)
