@@ -14,6 +14,8 @@ from typing import Dict, Any, List, Optional
 import yaml # Added
 from pathlib import Path # Added for robust path handling
 
+# NOTE: We intentionally DO NOT import streamlit here. Configuration must be passed explicitly.
+
 def async_lru_cache(maxsize=128):
     """Decorator to create an LRU cache for async functions."""
     cache = {}
@@ -22,18 +24,29 @@ def async_lru_cache(maxsize=128):
     def decorator(async_func):
         @wraps(async_func)
         async def wrapper(*args, **kwargs):
-            key = str((args, sorted(kwargs.items())))
+            # Create a hashable key from arguments
+            # Convert dicts to frozenset of items for hashability
+            try:
+                args_key = tuple(frozenset(arg.items()) if isinstance(arg, dict) else arg for arg in args)
+                kwargs_key = frozenset(kwargs.items())
+                key = (args_key, kwargs_key)
+            except TypeError:
+                # If arguments contain unhashable types, bypass cache
+                return await async_func(*args, **kwargs)
 
             if key in cache:
-                order.remove(key)
+                if key in order:
+                   order.remove(key)
                 order.append(key)
                 return cache[key]
 
             result = await async_func(*args, **kwargs)
 
             if len(cache) >= maxsize:
-                oldest_key = order.pop(0)
-                cache.pop(oldest_key)
+                if order:
+                    oldest_key = order.pop(0)
+                    if oldest_key in cache:
+                       cache.pop(oldest_key)
 
             cache[key] = result
             order.append(key)
@@ -44,7 +57,7 @@ def async_lru_cache(maxsize=128):
             nonlocal cache, order
             cache.clear()
             order.clear()
-            print(f"Cache cleared for {async_func.__name__}") # Optional: for debugging
+            # print(f"Cache cleared for {async_func.__name__}")
 
         wrapper.cache_clear = cache_clear
         return wrapper
@@ -57,7 +70,11 @@ from langchain_core.output_parsers import StrOutputParser
 from .data_formatter import safe_json
 
 # Load .env from project root (adjust path for src layout)
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
+# This is kept as a fallback for configuration
+try:
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
+except Exception:
+    pass # Ignore if dotenv is not installed or .env file is missing
 
 # --- Prompt Loading ---
 @lru_cache() # Cache results
@@ -72,7 +89,6 @@ def load_prompts(prompt_file: str = "prompts.yaml") -> Dict[str, Any]:
         if not prompts:
             print(f"Warning: Prompt file '{file_path}' is empty or invalid.")
             return {}
-        print(f"Successfully loaded prompts from {file_path}")
         return prompts
     except FileNotFoundError:
         print(f"ERROR: Prompt file not found at {file_path}. Ensure '{prompt_file}' is in the 'utils' directory.")
@@ -102,39 +118,69 @@ def get_prompt(key: str, prompt_type: str = "system") -> str:
          return f"DEFAULT PROMPT: Error retrieving task details for {key} ({prompt_type})."
 
 
-# --- LLM Initialization (keep as is) ---
-@lru_cache() # Add this line
-def get_llm(timeout: float = 120.0):
-    """Initializes and returns the LangChain ChatOpenAI instance."""
-    api_key = os.getenv('OPENAI_API_KEY')
+# --- LLM Initialization (FIXED: Takes configuration explicitly) ---
+
+def initialize_llm(llm_config: Dict[str, Any], timeout: float = 120.0) -> ChatOpenAI:
+    """Initializes and returns the LangChain ChatOpenAI instance based on provided config."""
+
+    if not llm_config:
+        raise ValueError("LLM configuration dictionary is missing.")
+
+    api_key = llm_config.get('api_key')
+    # Use the model_id which is mapped from the display name in app.py
+    model_id = llm_config.get('model_id') 
+    api_base = llm_config.get('api_base') # Used for OpenRouter or other proxies
+    provider = llm_config.get('provider')
+
     if not api_key:
-        # Set a dummy key ONLY if running inside pytest environment
-        # This allows tests to import the module without crashing
+        # Fallback logic for pytest environment (if needed)
         if "PYTEST_CURRENT_TEST" in os.environ:
-             print("Warning: OPENAI_API_KEY not set, using dummy key for pytest collection.")
-             api_key = "DUMMY_API_KEY_FOR_PYTEST" # Or handle this more elegantly if needed
+             print("Warning: API Key not set, using dummy key for pytest collection.")
+             api_key = "DUMMY_API_KEY_FOR_PYTEST"
+             model_id = model_id or "gpt-4.1"
         else:
-             raise ValueError("OPENAI_API_KEY environment variable not set")
+             raise ValueError("API Key (OpenAI or OpenRouter) is not set in configuration.")
+
+    if not model_id:
+        raise ValueError("LLM model ID is not specified in the configuration.")
 
     # Using langchain's integration for async capabilities
-    return ChatOpenAI(
-        model="gpt-4.1", # Changed to user-specified model
+    # ChatOpenAI is compatible with both OpenAI and OpenRouter (which mimics the OpenAI API)
+    llm = ChatOpenAI(
+        model=model_id,
         temperature=0.7,
         openai_api_key=api_key,
+        openai_api_base=api_base if api_base else None, # Only set if provided (e.g., OpenRouter)
         max_retries=3,
         request_timeout=timeout
     )
 
+    # Specific headers required by OpenRouter (if using LangChain >= 0.1.17)
+    if provider == 'OpenRouter' and api_base and "openrouter.ai" in api_base:
+        # Check if default_headers attribute exists and initialize if needed
+        if hasattr(llm, 'default_headers'):
+            if llm.default_headers is None:
+                llm.default_headers = {}
+            llm.default_headers.update({
+                "HTTP-Referer": "https://oqt-assistant.com", # Replace if hosted elsewhere
+                "X-Title": "O'QT Assistant"
+            })
+        # For older LangChain versions, initialization might look different or require custom clients.
+
+    return llm
+
 output_parser = StrOutputParser()
 
-# --- Specialist Agent Functions (MODIFIED) ---
+# --- Specialist Agent Functions (MODIFIED to accept llm_config) ---
 
 # --- Chemical Context Agent ---
 @async_lru_cache(maxsize=128)
-async def analyze_chemical_context(chemical_data: Dict[str, Any], context: str) -> str:
+async def analyze_chemical_context(chemical_data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
     """Extracts key chemical identifiers using an LLM agent."""
     try:
-        basic_info = chemical_data.get('basic_info', {}) # [cite: 282]
+        llm = initialize_llm(llm_config) # FIXED: Initialize LLM with passed config
+
+        basic_info = chemical_data.get('basic_info', {})
         data_json = safe_json(basic_info)
 
         # Get prompts from loaded YAML data
@@ -145,26 +191,27 @@ async def analyze_chemical_context(chemical_data: Dict[str, Any], context: str) 
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | get_llm() | output_parser # [cite: 283]
+        chain = prompt_template | llm | output_parser
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
-        # ... (keep existing fallback logic if needed) [cite: 284]
         return response.strip()
     except Exception as e:
-        # ... (keep existing error handling) [cite: 285]
          error_msg = f"Error in Chemical Context Agent: {str(e)}"
          print(error_msg)
+         # Fallback if LLM fails
          name = chemical_data.get('basic_info', {}).get('Name', 'Unknown')
-         cas = chemical_data.get('basic_info', {}).get('CAS', 'N/A')
-         smiles = chemical_data.get('basic_info', {}).get('SMILES', 'N/A')
+         cas = chemical_data.get('basic_info', {}).get('Cas', 'N/A') # Use 'Cas' as per API response
+         smiles = chemical_data.get('basic_info', {}).get('Smiles', 'N/A') # Use 'Smiles' as per API response
          return f"Confirmed Chemical: {name} (CAS: {cas}, SMILES: {smiles}) [Error during analysis: {e}]"
 
 
 # --- Physical Properties Agent ---
 @async_lru_cache(maxsize=128)
-async def analyze_physical_properties(data: Dict[str, Any], context: str) -> str:
+async def analyze_physical_properties(data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
     """Analyzes physical properties using an LLM agent, returning text."""
     try:
+        llm = initialize_llm(llm_config) # FIXED: Initialize LLM with passed config
+
         data_json = safe_json(data)
         # Get prompts from loaded YAML data
         system_prompt = get_prompt("phys_props", "system")
@@ -173,8 +220,8 @@ async def analyze_physical_properties(data: Dict[str, Any], context: str) -> str
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             ("human", user_template)
-        ]) # [cite: 286]
-        chain = prompt_template | get_llm() | output_parser # [cite: 287]
+        ])
+        chain = prompt_template | llm | output_parser
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -185,9 +232,11 @@ async def analyze_physical_properties(data: Dict[str, Any], context: str) -> str
 
 # --- Environmental Fate Agent ---
 @async_lru_cache(maxsize=128)
-async def analyze_environmental_fate(data: Dict[str, Any], context: str) -> str:
-    """Analyzes environmental fate properties using an LLM agent, returning text.""" # [cite: 288]
+async def analyze_environmental_fate(data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
+    """Analyzes environmental fate properties using an LLM agent, returning text."""
     try:
+        llm = initialize_llm(llm_config) # FIXED: Initialize LLM with passed config
+
         data_json = safe_json(data)
         # Get prompts from loaded YAML data
         system_prompt = get_prompt("env_fate", "system")
@@ -197,7 +246,7 @@ async def analyze_environmental_fate(data: Dict[str, Any], context: str) -> str:
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | get_llm() | output_parser # [cite: 289]
+        chain = prompt_template | llm | output_parser
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -208,9 +257,11 @@ async def analyze_environmental_fate(data: Dict[str, Any], context: str) -> str:
 
 # --- Profiling/Reactivity Agent ---
 @async_lru_cache(maxsize=128)
-async def analyze_profiling_reactivity(data: Dict[str, Any], context: str) -> str:
-    """Analyzes profiling and reactivity using an LLM agent, returning text.""" # [cite: 290]
+async def analyze_profiling_reactivity(data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
+    """Analyzes profiling and reactivity using an LLM agent, returning text."""
     try:
+        llm = initialize_llm(llm_config) # FIXED: Initialize LLM with passed config
+
         data_json = safe_json(data)
         # Get prompts from loaded YAML data
         system_prompt = get_prompt("profiling_reactivity", "system")
@@ -220,7 +271,7 @@ async def analyze_profiling_reactivity(data: Dict[str, Any], context: str) -> st
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | get_llm() | output_parser # [cite: 291]
+        chain = prompt_template | llm | output_parser
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -231,9 +282,11 @@ async def analyze_profiling_reactivity(data: Dict[str, Any], context: str) -> st
 
 # --- Experimental Data Agent ---
 @async_lru_cache(maxsize=128)
-async def analyze_experimental_data(data: Dict[str, Any], context: str) -> str:
-    """Analyzes experimental data using an LLM agent, returning text.""" # [cite: 292]
+async def analyze_experimental_data(data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
+    """Analyzes experimental data using an LLM agent, returning text."""
     try:
+        llm = initialize_llm(llm_config) # FIXED: Initialize LLM with passed config
+
         data_json = safe_json(data)
         # Get prompts from loaded YAML data
         system_prompt = get_prompt("experimental_data", "system")
@@ -241,9 +294,9 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str) -> str:
 
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
-            ("human", user_template) # [cite: 293]
+            ("human", user_template)
         ])
-        chain = prompt_template | get_llm() | output_parser # [cite: 294]
+        chain = prompt_template | llm | output_parser
         input_dict = {"context": context, "data_json": data_json}
         response = await chain.ainvoke(input_dict)
         return response
@@ -254,32 +307,37 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str) -> str:
 
 # --- Read Across Agent ---
 @async_lru_cache(maxsize=128)
-async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[str], context: str) -> str:
+async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[str], context: str, llm_config: Dict[str, Any]) -> str:
     """Analyzes data gaps and suggests read-across strategy using an LLM agent with robust timeout handling."""
-    
+
     # Implement progressive timeout strategy with fallback
     timeout_strategies = [
         {"timeout": 180.0, "description": "Extended timeout (3 minutes)"},
         {"timeout": 300.0, "description": "Long timeout (5 minutes)"},
     ]
     
+    error_msg = "N/A"
+
     for strategy in timeout_strategies:
         try:
-            print(f"Attempting Read Across analysis with {strategy['description']}")
-            
+            # print(f"Attempting Read Across analysis with {strategy['description']}")
+
+            # FIXED: Initialize LLM with passed config AND custom timeout
+            llm = initialize_llm(llm_config, timeout=strategy["timeout"])
+
             # Prepare data - truncate if too large to reduce processing time
             results_json = safe_json(results)
             specialist_outputs_text = "\n\n---\n\n".join(specialist_outputs)
-            
+
             # Limit input size to prevent timeouts - truncate if necessary
             max_chars = 25000  # Reasonable limit for LLM processing
             if len(results_json) > max_chars:
                 results_json = results_json[:max_chars] + "\n\n[NOTE: Results data truncated to prevent timeout]"
-                print(f"Truncated results_json to {max_chars} characters to prevent timeout")
-            
+                # print(f"Truncated results_json to {max_chars} characters to prevent timeout")
+
             if len(specialist_outputs_text) > max_chars:
                 specialist_outputs_text = specialist_outputs_text[:max_chars] + "\n\n[NOTE: Specialist outputs truncated to prevent timeout]"
-                print(f"Truncated specialist_outputs_text to {max_chars} characters to prevent timeout")
+                # print(f"Truncated specialist_outputs_text to {max_chars} characters to prevent timeout")
 
             # Get prompts from loaded YAML data
             system_prompt = get_prompt("read_across", "system")
@@ -289,60 +347,55 @@ async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[
                 ("system", system_prompt),
                 ("human", user_template)
             ])
-            
-            # Use custom timeout for this agent
-            chain = prompt_template | get_llm(timeout=strategy["timeout"]) | output_parser
-            
+
+            chain = prompt_template | llm | output_parser
+
             input_dict = {
                 "context": context,
                 "results_json": results_json,
                 "specialist_outputs_text": specialist_outputs_text
             }
-            
+
             # Add asyncio timeout as additional protection
             response = await asyncio.wait_for(
-                chain.ainvoke(input_dict), 
+                chain.ainvoke(input_dict),
                 timeout=strategy["timeout"] + 30  # Extra buffer
             )
-            
-            print(f"Read Across analysis completed successfully with {strategy['description']}")
+
+            # print(f"Read Across analysis completed successfully with {strategy['description']}")
             return response
-            
+
         except asyncio.TimeoutError:
             error_msg = f"Read Across Agent timed out after {strategy['timeout']} seconds"
             print(f"Warning: {error_msg}")
             continue  # Try next strategy
-            
+
         except Exception as e:
             error_msg = f"Read Across Agent failed with {strategy['description']}: {str(e)}"
             print(f"Warning: {error_msg}")
-            
+
             # If this is a timeout-related error, try next strategy
             if "timeout" in str(e).lower() or "timed out" in str(e).lower():
                 continue
             else:
-                # For non-timeout errors, don't continue trying
+                # For non-timeout errors (e.g., AuthenticationError), don't continue trying
                 break
-    
+
     # If all strategies failed, return a meaningful fallback response
-    fallback_response = """
-    Error in Read Across Agent: Request timed out.
-    
-    No read-across analysis could be provided due to a timeout error. If read-across or analog data are required for this assessment, it is recommended to rerun the read-across analysis or provide additional input on suitable analogues.
-    
+    fallback_response = f"""
+    Error in Read Across Agent: Analysis failed or timed out.
+
+    No read-across analysis could be provided due to an error or timeout. If read-across or analog data are required for this assessment, it is recommended to rerun the analysis or consult the QSAR Toolbox desktop application.
+
+    **Last Error Message (if available):** {error_msg}
+
     **Potential Solutions:**
-    - Try running the analysis again with a smaller dataset
-    - Consider using a more focused chemical search
-    - Manually identify similar chemicals for read-across analysis
-    - Consult QSAR Toolbox desktop application for comprehensive read-across workflows
-    
-    **Alternative Approaches:**
-    - Use category-based read-across based on the profiling results
-    - Apply trend analysis using similar chemicals within the same structural class
-    - Consider mechanism-based grouping for toxicity assessment
+    - Ensure your LLM API configuration is correct (API Key, Model Access).
+    - Try running the analysis again, potentially with a smaller dataset or a faster LLM model.
+    - Manually identify similar chemicals for read-across analysis.
     """
-    
-    print("All timeout strategies exhausted, returning fallback response")
+
+    print("All timeout strategies exhausted or analysis failed, returning fallback response")
     return fallback_response
 
 # --- Synthesizer Agent ---
@@ -351,11 +404,13 @@ async def synthesize_report(
     chemical_identifier: str,
     specialist_outputs: List[str],
     read_across_report: str,
-    context: str
+    context: str,
+    llm_config: Dict[str, Any]
 ) -> str:
     """Synthesizes text outputs from specialist agents into a final report, including read-across."""
     try:
-        # ... (keep existing logic for handling specialist_outputs list size) [cite: 299, 300, 301]
+        llm = initialize_llm(llm_config) # FIXED: Initialize LLM with passed config
+
         if len(specialist_outputs) != 4:
              print(f"Warning: Expected 4 original specialist outputs for synthesis, received {len(specialist_outputs)}")
              outputs = specialist_outputs + ["No analysis available."] * (4 - len(specialist_outputs))
@@ -384,7 +439,7 @@ async def synthesize_report(
             ("system", system_prompt),
             ("human", user_template)
         ])
-        chain = prompt_template | get_llm() | output_parser # [cite: 312]
+        chain = prompt_template | llm | output_parser
         input_dict = {
             "chemical_identifier": chemical_identifier,
             "context": context,
@@ -392,13 +447,37 @@ async def synthesize_report(
             "environmental_fate_analysis": env_analysis,
             "profiling_reactivity_analysis": prof_analysis,
             "experimental_data_analysis": exp_analysis,
-            "read_across_analysis": read_across_analysis # [cite: 313]
+            "read_across_analysis": read_across_analysis
         }
         response = await chain.ainvoke(input_dict)
         return response
+    
     except Exception as e:
         error_msg = f"Error in Synthesizer Agent: {str(e)}"
         print(error_msg)
-        return f"Error synthesizing report for {chemical_identifier}: {error_msg}" # [cite: 314]
+        
+        # Provide specific guidance for common OpenRouter errors
+        if "404" in str(e) and "data policy" in str(e).lower():
+            return f"""Error synthesizing report for {chemical_identifier}: 
 
-# Rest of the file...
+OpenRouter Privacy Settings Issue Detected:
+The error suggests your OpenRouter privacy settings are blocking access to this model.
+
+To resolve:
+1. Go to https://openrouter.ai/settings/privacy
+2. Enable "Providers that may train on inputs"
+3. Retry the analysis
+
+Alternatively, try switching to a different model or use direct OpenAI API instead of OpenRouter.
+
+Technical error: {error_msg}"""
+        
+        return f"Error synthesizing report for {chemical_identifier}: {error_msg}"
+    except Exception as e:
+        error_msg = f"Error in Synthesizer Agent: {str(e)}"
+        print(error_msg)
+        try:
+            st.error(f"⚠️ LLM Error: {error_msg}")
+        except Exception:
+            pass
+        return f"Error synthesizing report for {chemical_identifier}: {error_msg}"
