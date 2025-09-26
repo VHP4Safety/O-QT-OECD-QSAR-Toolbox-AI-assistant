@@ -16,6 +16,7 @@ from pathlib import Path # Added for robust path handling
 
 # NOTE: We intentionally DO NOT import streamlit here. Configuration must be passed explicitly.
 
+# UPDATED: More robust handling of unhashable arguments for caching
 def async_lru_cache(maxsize=128):
     """Decorator to create an LRU cache for async functions."""
     cache = {}
@@ -25,13 +26,52 @@ def async_lru_cache(maxsize=128):
         @wraps(async_func)
         async def wrapper(*args, **kwargs):
             # Create a hashable key from arguments
-            # Convert dicts to frozenset of items for hashability
             try:
-                args_key = tuple(frozenset(arg.items()) if isinstance(arg, dict) else arg for arg in args)
-                kwargs_key = frozenset(kwargs.items())
+                # Improved handling for complex types like lists of dicts
+                hashable_args = []
+                for arg in args:
+                    if isinstance(arg, list):
+                        # Try converting list elements (if dicts) to frozensets, otherwise serialize
+                        try:
+                            hashable_list = tuple(frozenset(item.items()) if isinstance(item, dict) else item for item in arg)
+                            hashable_args.append(hashable_list)
+                        except TypeError:
+                            # Fallback if list contains complex unhashable types
+                            hashable_args.append(json.dumps(arg, sort_keys=True, default=str))
+                    elif isinstance(arg, dict):
+                        # Handle nested dictionaries by serializing unhashable values
+                        try:
+                            hashable_items = []
+                            for k, v in arg.items():
+                                try:
+                                    hash(v)
+                                    hashable_items.append((k, v))
+                                except TypeError:
+                                    # If value is unhashable (like a list or dict), serialize it
+                                    hashable_items.append((k, json.dumps(v, sort_keys=True, default=str)))
+                            hashable_args.append(frozenset(hashable_items))
+                        except TypeError:
+                            # Fallback if dict contains values that cannot be handled even by serialization
+                            hashable_args.append(json.dumps(arg, sort_keys=True, default=str))
+                    else:
+                        hashable_args.append(arg)
+                args_key = tuple(hashable_args)
+                
+                # Handle kwargs similarly
+                hashable_kwargs = []
+                for k, v in kwargs.items():
+                    try:
+                        hash(v)
+                        hashable_kwargs.append((k, v))
+                    except TypeError:
+                        hashable_kwargs.append((k, json.dumps(v, sort_keys=True, default=str)))
+                kwargs_key = frozenset(hashable_kwargs)
+
                 key = (args_key, kwargs_key)
-            except TypeError:
-                # If arguments contain unhashable types, bypass cache
+
+            except (TypeError, json.JSONDecodeError) as e:
+                # If arguments contain unhashable types that cannot be handled, bypass cache
+                # print(f"Bypassing cache for {async_func.__name__} due to unhashable arguments: {e}")
                 return await async_func(*args, **kwargs)
 
             if key in cache:
@@ -305,6 +345,66 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str, llm_conf
         print(error_msg)
         return error_msg # Return error message string
 
+# --- UPDATED: Metabolism Agent (Fixed logic for multi-simulator) ---
+@async_lru_cache(maxsize=128)
+async def analyze_metabolism(data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
+    """Analyzes metabolism simulation results using an LLM agent, returning text."""
+    # Handle cases where data might be missing
+    if not data:
+        return "Metabolism data was not available for analysis."
+
+    status = data.get("status", "Unknown")
+    
+    if status == "Skipped":
+        return "Metabolism simulation was skipped by the user."
+    
+    # Check if there are any simulations recorded
+    simulations = data.get("simulations", {})
+    if not simulations:
+        # Handle cases where the structure exists but no runs occurred (or failed before runs started)
+        if status == "Failed" or status == "Error":
+             return f"Metabolism simulation failed or encountered an error. Details: {data.get('note', 'N/A')}"
+        return "Metabolism data structure is present, but no simulation runs were recorded."
+
+    # FIX: Check if any metabolites were actually generated across all simulations
+    total_metabolites = 0
+    for sim_result in simulations.values():
+        # Ensure metabolites entry is a list before calculating length, and handle potential non-list entries
+        metabolites_list = sim_result.get("metabolites", [])
+        if isinstance(metabolites_list, list):
+            total_metabolites += len(metabolites_list)
+
+    # If no metabolites were found across all simulations
+    if total_metabolites == 0:
+         # Check if the overall status indicates failure/error even if individual simulations didn't record metabolites
+        if status == "Failed" or status == "Error":
+             return f"Metabolism simulation failed or encountered an error. No metabolites were generated. Details: {data.get('note', 'N/A')}"
+        
+        # This message is correctly triggered only if total_metabolites is 0 and status is Success/Partial Success
+        return "Metabolism simulation(s) completed, but no metabolites were generated across any selected simulators."
+
+    # If we reach here, we have data to analyze, proceed to LLM call.
+    try:
+        llm = initialize_llm(llm_config)
+
+        data_json = safe_json(data)
+        # Get prompts from loaded YAML data
+        system_prompt = get_prompt("metabolism", "system")
+        user_template = get_prompt("metabolism", "user")
+
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", user_template)
+        ])
+        chain = prompt_template | llm | output_parser
+        input_dict = {"context": context, "data_json": data_json}
+        response = await chain.ainvoke(input_dict)
+        return response
+    except Exception as e:
+        error_msg = f"Error in Metabolism Agent (LLM processing): {str(e)}"
+        print(error_msg)
+        return error_msg # Return error message string
+
 # --- Read Across Agent ---
 @async_lru_cache(maxsize=128)
 async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[str], context: str, llm_config: Dict[str, Any]) -> str:
@@ -330,7 +430,7 @@ async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[
             specialist_outputs_text = "\n\n---\n\n".join(specialist_outputs)
 
             # Limit input size to prevent timeouts - truncate if necessary
-            max_chars = 25000  # Reasonable limit for LLM processing
+            max_chars = 30000  # Increased limit slightly due to 5 specialists now
             if len(results_json) > max_chars:
                 results_json = results_json[:max_chars] + "\n\n[NOTE: Results data truncated to prevent timeout]"
                 # print(f"Truncated results_json to {max_chars} characters to prevent timeout")
@@ -411,9 +511,11 @@ async def synthesize_report(
     try:
         llm = initialize_llm(llm_config) # FIXED: Initialize LLM with passed config
 
-        if len(specialist_outputs) != 4:
-             print(f"Warning: Expected 4 original specialist outputs for synthesis, received {len(specialist_outputs)}")
-             outputs = specialist_outputs + ["No analysis available."] * (4 - len(specialist_outputs))
+        # Updated expected number of outputs from 4 to 5
+        EXPECTED_OUTPUTS = 5
+        if len(specialist_outputs) != EXPECTED_OUTPUTS:
+             print(f"Warning: Expected {EXPECTED_OUTPUTS} original specialist outputs for synthesis, received {len(specialist_outputs)}")
+             outputs = specialist_outputs + ["No analysis available."] * (EXPECTED_OUTPUTS - len(specialist_outputs))
         else:
              outputs = specialist_outputs
 
@@ -422,6 +524,7 @@ async def synthesize_report(
         env_analysis = analyses[1]
         prof_analysis = analyses[2]
         exp_analysis = analyses[3]
+        metabolism_analysis = analyses[4] # NEW
         read_across_analysis = read_across_report if isinstance(read_across_report, str) else "Error: Invalid read-across analysis format received."
 
         # Get prompts from loaded YAML data
@@ -447,6 +550,7 @@ async def synthesize_report(
             "environmental_fate_analysis": env_analysis,
             "profiling_reactivity_analysis": prof_analysis,
             "experimental_data_analysis": exp_analysis,
+            "metabolism_analysis": metabolism_analysis, # NEW
             "read_across_analysis": read_across_analysis
         }
         response = await chain.ainvoke(input_dict)
@@ -472,12 +576,4 @@ Alternatively, try switching to a different model or use direct OpenAI API inste
 
 Technical error: {error_msg}"""
         
-        return f"Error synthesizing report for {chemical_identifier}: {error_msg}"
-    except Exception as e:
-        error_msg = f"Error in Synthesizer Agent: {str(e)}"
-        print(error_msg)
-        try:
-            st.error(f"⚠️ LLM Error: {error_msg}")
-        except Exception:
-            pass
         return f"Error synthesizing report for {chemical_identifier}: {error_msg}"

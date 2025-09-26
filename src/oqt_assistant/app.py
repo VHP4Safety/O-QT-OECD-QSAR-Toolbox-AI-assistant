@@ -31,14 +31,21 @@ from oqt_assistant.utils.llm_utils import (
     analyze_environmental_fate,
     analyze_profiling_reactivity,
     analyze_experimental_data,
+    analyze_metabolism,
     analyze_read_across,
     synthesize_report
 )
 from oqt_assistant.components.search import render_search_section
 from oqt_assistant.components.results import render_results_section, render_download_section
 
+# NEW IMPORT
+from oqt_assistant.utils.pdf_generator import generate_pdf_report
+
+
 # Define the maximum number of experimental records to send to LLM agents
 MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA = 500
+# Define maximum number of metabolites to process PER SIMULATOR (to prevent overwhelming the LLM and UI)
+MAX_METABOLITES_PER_SIMULATOR = 50 
 
 # Define LLM Models and Costs (Updated for transparency)
 # Costs are per 1 Million tokens (Input/Output). 'id' is the actual model identifier for the API.
@@ -70,6 +77,7 @@ LLM_MODELS = {
 }
 
 def initialize_session_state():
+    # ... (This function remains the same)
     """Initialize or reset session state variables"""
     defaults = {
         'analysis_results': None, # Raw data from QSAR API
@@ -87,7 +95,10 @@ def initialize_session_state():
         'input_identifier': '',
         'input_search_type': 'name',
         'input_context': '',
-        'input_details': {}
+        'input_details': {},
+        # UPDATED: Metabolism state
+        'available_simulators': [],
+        'selected_simulator_guids': [], # Changed from single GUID to list
     }
 
     # --- Configuration State Initialization ---
@@ -122,7 +133,9 @@ def initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = default_value
 
+
 def update_progress(value: float, description: str):
+    # ... (This function remains the same)
     """Update progress bar with value and description"""
     st.session_state.progress_value = value
     st.session_state.progress_description = description
@@ -137,10 +150,26 @@ def update_progress(value: float, description: str):
                                                     text=f"Status: {description}")
 
 
+
 def check_connection(api_client: QSARToolboxAPI) -> bool:
-    """Check if QSAR Toolbox API is accessible"""
+    # ... (This function remains the same)
+    """Check if QSAR Toolbox API is accessible and fetch initial data like simulators."""
     try:
         api_client.get_version()
+        # Fetch simulators upon successful connection (NEW)
+        simulators = api_client.get_simulators()
+        st.session_state.available_simulators = simulators
+        
+        # Validate existing selection against available simulators
+        valid_selections = []
+        available_guids = [s['Guid'] for s in simulators]
+        
+        for guid in st.session_state.selected_simulator_guids:
+            if guid in available_guids:
+                valid_selections.append(guid)
+        
+        st.session_state.selected_simulator_guids = valid_selections
+
         st.session_state.connection_status = True
         return True
     except QSARConnectionError:
@@ -152,8 +181,10 @@ def check_connection(api_client: QSARToolboxAPI) -> bool:
         # st.error(f"⚠️ Unexpected error checking connection: {str(e)}")
         return False
 
+
 # Modify render_reports_section to display the single final report
 def render_reports_section(identifier: str):
+    # ... (This function remains the same)
     """Render the final synthesized report section."""
     st.header("Synthesized Analysis Report")
 
@@ -173,14 +204,44 @@ def render_reports_section(identifier: str):
     else:
         st.info("Synthesized report is not available or is being generated.")
 
-# --- Function to render specialist downloads and Comprehensive Log ---
+
+# UPDATED FUNCTION: Includes PDF Download
 def render_specialist_downloads(identifier: str):
     """Render download buttons for individual specialist agent reports and the comprehensive log."""
     st.sidebar.markdown("---")
     st.sidebar.subheader("Downloads")
 
+    # --- NEW: Comprehensive PDF Report Download ---
+    if st.session_state.get('comprehensive_log') and st.session_state.get('final_report'):
+        st.sidebar.markdown("#### Comprehensive Report")
+        
+        # We generate the PDF on the fly when the download button is utilized.
+        # The download button's 'data' argument triggers the generation.
+        try:
+            # Generate the PDF content (this might take a moment)
+            # We rely on the comprehensive_log containing all necessary data (metadata, reports)
+            pdf_bytes = generate_pdf_report(st.session_state.comprehensive_log)
+            
+            st.sidebar.download_button(
+                label="Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"{identifier}_OQT_Report.pdf",
+                mime="application/pdf",
+                key="comprehensive_pdf_download",
+                help="Download a PDF containing the synthesized report, all specialist analyses, and analysis metadata."
+            )
+        except Exception as e:
+            st.sidebar.error(f"Error generating PDF: {e}")
+            # Optionally log the full traceback
+            import traceback
+            traceback.print_exc()
+
+
+    # --- Existing Downloads (Log and Specialist TXT) ---
+
     # Add Comprehensive Log Download (Addressing Transparency)
     if st.session_state.get('comprehensive_log'):
+        st.sidebar.markdown("#### Raw Data and Logs")
         log_data = json.dumps(st.session_state.comprehensive_log, indent=2, default=str)
         st.sidebar.download_button(
             label="Download Comprehensive Log (JSON)",
@@ -195,12 +256,14 @@ def render_specialist_downloads(identifier: str):
     if 'specialist_outputs_dict' not in st.session_state or not st.session_state.specialist_outputs_dict:
         st.sidebar.info("Specialist analyses not available.")
     else:
+        # Updated list of specialists
         specialist_names = [
             "Chemical_Context",
             "Physical_Properties",
             "Environmental_Fate",
             "Profiling_Reactivity",
             "Experimental_Data",
+            "Metabolism",
             "Read_Across"
         ]
 
@@ -236,7 +299,7 @@ def generate_comprehensive_log(
         "metadata": {
             "timestamp": datetime.now().isoformat(),
             "tool_name": "O'QT Assistant",
-            "version": "1.0.1" # Update as needed
+            "version": "1.3.0" # Updated version for PDF reporting
         },
         "configuration": {
             "llm_configuration": masked_llm_config,
@@ -254,8 +317,9 @@ def generate_comprehensive_log(
     return log
 
 
-# Modify perform_chemical_analysis to use configured URL
-def perform_chemical_analysis(identifier: str, search_type: str, context: str) -> Optional[Dict[str, Any]]:
+# UPDATED: Modified perform_chemical_analysis to accept a list of simulator_guids
+def perform_chemical_analysis(identifier: str, search_type: str, context: str, simulator_guids: List[str]) -> Optional[Dict[str, Any]]:
+    # ... (This function remains the same)
     """Perform chemical data retrieval using QSAR Toolbox API (Synchronous)."""
     try:
         # Initialize API client using configuration from session state
@@ -276,7 +340,7 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
             return None
 
         # --- Sequential Data Fetching ---
-        update_progress(0.1, "🔍 Searching for chemical...")
+        update_progress(0.05, "🔍 Searching for chemical...")
         try:
             if search_type == 'name':
                 # Check if caching is used and clear it if necessary
@@ -295,8 +359,8 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
              st.warning("Search request timed out, retrying...")
              if st.session_state.retry_count < st.session_state.max_retries:
                  st.session_state.retry_count += 1
-                 # Recursive call might be problematic in async context, consider loop/retry pattern if needed
-                 return perform_chemical_analysis(identifier, search_type, context)
+                 # Pass simulator_guids in the recursive call
+                 return perform_chemical_analysis(identifier, search_type, context, simulator_guids)
              else:
                  raise QSARTimeoutError("Maximum retries exceeded during chemical search")
 
@@ -314,8 +378,91 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
         if not chem_id:
              raise QSARResponseError("Could not retrieve ChemId from search result.")
 
+        # --- UPDATED: Metabolism Simulation (Multi-Simulator) ---
+        
+        # Initialize structure for metabolism data
+        metabolism_data = {
+            "status": "Pending",
+            "note": "",
+            "simulations": {} # Dictionary to hold results per simulator
+        }
 
-        update_progress(0.3, "📊 Calculating chemical properties...")
+        if not simulator_guids:
+            metabolism_data["status"] = "Skipped"
+            metabolism_data["note"] = "No metabolism simulators were selected."
+        else:
+            total_simulators = len(simulator_guids)
+            simulators_completed = 0
+            
+            # Get simulator names for better logging
+            simulator_map = {s['Guid']: s['Caption'] for s in st.session_state.available_simulators}
+
+            for i, simulator_guid in enumerate(simulator_guids):
+                simulator_name = simulator_map.get(simulator_guid, f"GUID: {simulator_guid}")
+                progress_start = 0.1
+                progress_end = 0.4
+                progress_step = (progress_end - progress_start) / total_simulators
+                current_progress = progress_start + (i * progress_step)
+
+                update_progress(current_progress, f"🧬 Simulating metabolism ({i+1}/{total_simulators}): {simulator_name} (may take time)...")
+                
+                simulation_result = {
+                    "status": "Pending",
+                    "note": "",
+                    "simulator_guid": simulator_guid,
+                    "simulator_name": simulator_name,
+                    "metabolites": []
+                }
+
+                try:
+                    # This might take time, the timeout is handled within the API client method
+                    raw_metabolites = api_client.apply_simulator(simulator_guid, chem_id)
+                    
+                    # Process results
+                    if raw_metabolites:
+                        # Truncate metabolites if they exceed the limit PER SIMULATOR
+                        if len(raw_metabolites) > MAX_METABOLITES_PER_SIMULATOR:
+                            metabolites = raw_metabolites[:MAX_METABOLITES_PER_SIMULATOR]
+                            truncation_note = f" (Truncated to first {MAX_METABOLITES_PER_SIMULATOR} metabolites for analysis)"
+                        else:
+                            metabolites = raw_metabolites
+                            truncation_note = ""
+
+                        simulation_result["status"] = "Success"
+                        simulation_result["note"] = f"Generated {len(raw_metabolites)} metabolites{truncation_note}."
+                        simulation_result["metabolites"] = metabolites
+                        simulators_completed += 1
+                    else:
+                        simulation_result["status"] = "Success"
+                        simulation_result["note"] = "Simulation completed but generated no metabolites."
+                        simulators_completed += 1
+
+                except QSARResponseError as e:
+                    # Handle failure/timeout gracefully for this specific simulator
+                    st.warning(f"Metabolism simulation failed for {simulator_name}: {str(e)}. Proceeding to next step.")
+                    simulation_result["status"] = "Failed"
+                    simulation_result["note"] = f"Simulation failed or timed out: {str(e)}"
+                except Exception as e:
+                    st.warning(f"Unexpected error during metabolism simulation for {simulator_name}: {str(e)}. Proceeding to next step.")
+                    simulation_result["status"] = "Error"
+                    simulation_result["note"] = f"An unexpected error occurred: {str(e)}"
+                
+                # Store the result for this simulator
+                metabolism_data["simulations"][simulator_guid] = simulation_result
+
+            # Summarize overall metabolism status
+            if simulators_completed == total_simulators:
+                metabolism_data["status"] = "Success"
+                metabolism_data["note"] = f"All {total_simulators} selected simulators completed successfully."
+            elif simulators_completed > 0:
+                metabolism_data["status"] = "Partial Success"
+                metabolism_data["note"] = f"{simulators_completed} out of {total_simulators} simulators completed successfully."
+            else:
+                metabolism_data["status"] = "Failed"
+                metabolism_data["note"] = "All selected metabolism simulations failed."
+
+
+        update_progress(0.4, "📊 Calculating chemical properties...") # Adjusted progress
         try:
             raw_props = api_client.apply_all_calculators(chem_id) or {}
             # Flatten list‑of‑records → {parameter: value} if needed, though qsar_api.py should handle this
@@ -332,15 +479,17 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
             st.warning(f"Error retrieving or processing properties: {str(e)}")
             properties = {}
 
-        update_progress(0.5, "🧪 Retrieving experimental data...")
+        update_progress(0.6, "🧪 Retrieving experimental data (with metadata)...") # Adjusted progress
         try:
+            # Data retrieval now attempts to include metadata by default
             experimental_data = api_client.get_all_chemical_data(chem_id) or []
         except Exception as e:
             st.warning(f"Error retrieving experimental data: {str(e)}")
             experimental_data = []
 
-        update_progress(0.7, "🔬 Retrieving profiling data...")
+        update_progress(0.75, "🔬 Retrieving profiling data...") # Adjusted progress
         try:
+            # We profile the parent compound, typically using 'No metabolism' (default GUID in API client)
             profiling_data = api_client.get_chemical_profiling(chem_id) or {}
         except Exception as e:
             st.warning(f"Error retrieving profiling data: {str(e)}")
@@ -356,6 +505,7 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
             },
             'experimental_data': experimental_data, # This is the FULL experimental_data for UI/Download
             'profiling': profiling_data,
+            'metabolism': metabolism_data, # UPDATED: Add structured multi-simulation data
             'context': context # Pass context along
         }
         return results
@@ -372,7 +522,9 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str) -
                del st.session_state.progress_bar
         raise # Re-raise the exception to be caught in main
 
+
 def render_configuration_ui():
+    # ... (This function remains the same)
     """Renders the configuration UI in the sidebar for LLM and QSAR API settings."""
     st.sidebar.header("Configuration")
 
@@ -488,7 +640,9 @@ def render_configuration_ui():
         st.sidebar.warning("LLM API Key required.")
 
 
+
 def render_methodology_and_transparency():
+    # ... (This function remains the same)
     """Renders information about the tool's methodology, scope, and transparency in the sidebar."""
     st.sidebar.markdown("---")
     st.sidebar.header("About O'QT Assistant")
@@ -504,14 +658,14 @@ def render_methodology_and_transparency():
 
     with st.sidebar.expander("Methodology and Scope (Reviewer #1 & #3)"):
         st.markdown("""
-        **Methodology:** O'QT employs a multi-agent LLM framework to automate the analysis of data retrieved directly from the OECD QSAR Toolbox API.
+        **Methodology:** O'QT employs a multi-agent LLM framework to automate the analysis of data retrieved directly from the OECD QSAR Toolbox API. This now includes metabolism simulation (Addressing Reviewer #2).
 
         **Scope and Rationale for Exclusions:**
         The current version focuses on core hazard assessment endpoints readily available via the QSAR Toolbox API. We have excluded:
-        - **Toxicokinetics/ADME models:** These often require complex simulations and specific input parameters not fully exposed or easily automated via the current API, often leading to timeouts.
+        - **Toxicokinetics/ADME models:** While basic metabolism is included, complex TK/ADME simulations require parameters not fully exposed or easily automated via the current API, often leading to timeouts.
         - **Complex Mammalian Toxicity Endpoints (e.g., LD50/LC50):** Comprehensive assessment often requires integrating diverse data types and complex QSAR models which are better handled within the desktop application's dedicated workflows.
 
-        **Data Extraction:** The agents extract available experimental data points retrieved from the Toolbox, including physicochemical parameters, toxicity endpoints, environmental fate parameters, etc., focusing specifically on records marked as "Measured value".
+        **Data Extraction:** The agents extract available experimental data points retrieved from the Toolbox, including physicochemical parameters, toxicity endpoints, environmental fate parameters, etc., focusing specifically on records marked as "Measured value". Metadata associated with these studies is now also retrieved.
         """)
 
     with st.sidebar.expander("Transparency and Reliability (Reviewer #3)"):
@@ -525,6 +679,7 @@ def render_methodology_and_transparency():
 
         **Comprehensive Log:** A complete JSON log of the analysis (configuration, inputs, raw data, and outputs) is available for download to ensure full transparency and reproducibility.
         """)
+
 
 # Make main async
 async def main():
@@ -549,6 +704,7 @@ async def main():
             identifier_display = st.session_state.comprehensive_log['inputs']['identifier']
         except (KeyError, TypeError):
             identifier_display = st.session_state.input_identifier or "previous_analysis"
+        # This function now includes the PDF download button
         render_specialist_downloads(identifier_display)
         
     render_methodology_and_transparency()
@@ -556,10 +712,47 @@ async def main():
 
     # --- Header ---
     st.title("🧪 O'QT: The Open QSAR Toolbox AI Assistant") # Updated Title
-    st.markdown("Multi-Agent Chemical Analysis, Hazard Assessment and Read-Across Recommendations")
+    st.markdown("Multi-Agent Chemical Analysis, Hazard Assessment, Metabolism Simulation, and Read-Across Recommendations")
 
     # --- Main Area: Search Input (No longer using st.form for better "Select All" functionality) ---
+    
+    # Check connection status proactively if configuration is complete (Needed for simulators)
+    if st.session_state.qsar_config['config_complete'] and st.session_state.connection_status is None:
+         try:
+             api_client = QSARToolboxAPI(base_url=st.session_state.qsar_config['api_url'], timeout=(5, 10))
+             check_connection(api_client)
+             # Rerun might be needed to update UI elements relying on connection status (like simulator list)
+             # st.rerun() # Avoid rerun here if possible, let the UI update naturally
+         except Exception:
+             st.session_state.connection_status = False
+
     identifier, search_type, context = render_search_section()
+
+    # --- UPDATED: Metabolism Simulator Selection (Multi-select) ---
+    st.subheader("3. Metabolism Simulation (Optional)")
+    if st.session_state.connection_status:
+        simulators = st.session_state.available_simulators
+        if simulators:
+            simulator_options = {s['Caption']: s['Guid'] for s in simulators}
+            
+            # Determine currently selected captions based on stored GUIDs
+            current_selections = [caption for caption, guid in simulator_options.items() if guid in st.session_state.selected_simulator_guids]
+
+            selected_captions = st.multiselect(
+                "Select Metabolism Simulators (Select multiple or leave empty to skip)",
+                options=list(simulator_options.keys()),
+                default=current_selections,
+                help="Select one or more simulators (e.g., Rat liver S9, Autoxidation). This step may take several minutes per simulator. Leave empty to skip metabolism simulation."
+            )
+            # Update session state with the GUIDs of the selected captions
+            st.session_state.selected_simulator_guids = [simulator_options[caption] for caption in selected_captions]
+        else:
+            st.info("No metabolism simulators available from the API.")
+            st.session_state.selected_simulator_guids = []
+    else:
+        st.warning("Connect to QSAR Toolbox (see sidebar) to enable metabolism simulation selection.")
+        st.session_state.selected_simulator_guids = []
+
 
     # Analyze Button placed prominently after inputs
     analyze_button_clicked = st.button("🚀 Analyze Chemical", type="primary", use_container_width=True)
@@ -573,6 +766,7 @@ async def main():
         "identifier": identifier,
         "search_type": search_type, 
         "context": context,
+        "simulator_guids": st.session_state.selected_simulator_guids, # Add simulator selection list to inputs
         "details": {}
     }
 
@@ -584,6 +778,7 @@ async def main():
 
     if analyze_button_clicked:
         # Perform initial checks (connection check is done here if not already established)
+        # This check is redundant if the proactive check above runs, but safe to keep.
         if is_qsar_ready and st.session_state.connection_status is None:
              try:
                  api_client = QSARToolboxAPI(base_url=st.session_state.qsar_config['api_url'], timeout=(5, 10))
@@ -627,7 +822,8 @@ async def main():
 
             try:
                 # --- Step 1: Sequential Data Fetching ---
-                results = perform_chemical_analysis(identifier, search_type, context)
+                # Pass the selected simulator GUIDs list
+                results = perform_chemical_analysis(identifier, search_type, context, st.session_state.selected_simulator_guids)
 
                 if results:
                     st.session_state.analysis_results = results # Store raw results (contains full experimental data)
@@ -648,9 +844,18 @@ async def main():
                     # Prepare data slices for agents
                     properties_data = results.get('chemical_data', {}).get('properties', {}) # Already fetched
                     profiling_data = results.get('profiling', {})
+                    metabolism_data = results.get('metabolism', {}) # NEW: Get structured metabolism data
 
-                    # **NEW: Handle experimental data truncation for LLM agents**
-                    original_experimental_data_list = results.get('experimental_data', [])
+                    # **Handle experimental data truncation for LLM agents**
+                    
+                    # We need to import the processing function here to prepare data for the LLM if we want the LLM to see the metadata.
+                    # FIX: Updated import name from flatten_experimental_metadata to process_experimental_metadata
+                    from oqt_assistant.utils.data_formatter import process_experimental_metadata
+                    
+                    # Apply processing to the raw experimental data BEFORE truncation for the LLM
+                    # FIX: Updated function call name
+                    original_experimental_data_list = process_experimental_metadata(results.get('experimental_data', []))
+
                     experimental_data_for_llm_processing = original_experimental_data_list
                     truncation_active_for_llm = False
                     truncation_note_for_llm = {}
@@ -674,7 +879,8 @@ async def main():
                             "DataType": "SystemNote", # Adding a type hint
                             # Include other common fields if your experimental data items usually have them, e.g., with "N/A"
                             "TestGuid": "N/A",
-                            "Reliability": "N/A"
+                            "Reliability": "N/A",
+                            "Parsed_Metadata": {} # Ensure structured metadata field exists
                         }
                         # Prepend the note so the LLM encounters it first.
                         experimental_data_for_llm_processing = [truncation_note_for_llm] + experimental_data_for_llm_processing
@@ -692,15 +898,18 @@ async def main():
                     # Environmental fate often uses properties like LogKow, Solubility, Vapor Pressure
                     task_env = asyncio.create_task(analyze_environmental_fate(properties_data, analysis_context, current_llm_config))
                     task_prof = asyncio.create_task(analyze_profiling_reactivity(profiling_data, analysis_context, current_llm_config))
-                    # Pass the potentially truncated and noted data to analyze_experimental_data
+                    # Pass the potentially truncated and noted data (now processed) to analyze_experimental_data
                     task_exp = asyncio.create_task(analyze_experimental_data(experimental_data_dict_for_llm, analysis_context, current_llm_config))
+                    # NEW TASK: Metabolism (passing the structured multi-simulation metabolism dictionary)
+                    task_meta = asyncio.create_task(analyze_metabolism(metabolism_data, analysis_context, current_llm_config))
 
                     # Run core tasks concurrently - outputs should now be strings
                     core_specialist_outputs_list: List[str] = await asyncio.gather(
                         task_phys,
                         task_env,
                         task_prof,
-                        task_exp
+                        task_exp,
+                        task_meta # NEW TASK
                     )
 
                     # Store core specialist outputs
@@ -708,7 +917,8 @@ async def main():
                         "Physical_Properties": str(core_specialist_outputs_list[0]),
                         "Environmental_Fate": str(core_specialist_outputs_list[1]),
                         "Profiling_Reactivity": str(core_specialist_outputs_list[2]),
-                        "Experimental_Data": str(core_specialist_outputs_list[3])
+                        "Experimental_Data": str(core_specialist_outputs_list[3]),
+                        "Metabolism": str(core_specialist_outputs_list[4]) # NEW OUTPUT
                     })
 
                     # --- Step 4: Read Across Agent ---
@@ -716,12 +926,13 @@ async def main():
 
                     # Prepare results for read_across agent, ensuring experimental data is truncated if needed for its LLM call
                     results_for_read_across_llm = results.copy() # Start with a copy of the full results
-                    if truncation_active_for_llm:
-                        # Replace 'experimental_data' in this copied dict with the truncated list + note
-                        # `experimental_data_for_llm_processing` already contains this
-                        results_for_read_across_llm['experimental_data'] = experimental_data_for_llm_processing
+                    
+                    # Replace 'experimental_data' in this copied dict with the processed/truncated list + note
+                    # `experimental_data_for_llm_processing` already contains this (processed in Step 3)
+                    results_for_read_across_llm['experimental_data'] = experimental_data_for_llm_processing
 
-                    # Pass full results (with potentially truncated experimental_data for LLM), the core outputs, and the enhanced context
+
+                    # Pass full results (with potentially truncated experimental_data for LLM), the core outputs (now including metabolism), and the enhanced context
                     # FIXED: Pass llm_config
                     read_across_report = await analyze_read_across(
                         results_for_read_across_llm,
@@ -734,11 +945,11 @@ async def main():
 
                     # --- Step 5: Synthesize Final Report ---
                     update_progress(0.95, "✍️ Synthesizing final report...")
-                    # Pass the actual identifier, the core specialist outputs, the read-across report, and the original context
+                    # Pass the actual identifier, the core specialist outputs (now 5), the read-across report, and the original context
                     # FIXED: Pass llm_config
                     final_report_content = await synthesize_report(
                         chemical_identifier=identifier,
-                        specialist_outputs=core_specialist_outputs_list, # Only the core 4
+                        specialist_outputs=core_specialist_outputs_list, # Only the core 5
                         read_across_report=read_across_report,
                         context=original_context, # Use the original user context for the synthesizer's goal
                         llm_config=current_llm_config

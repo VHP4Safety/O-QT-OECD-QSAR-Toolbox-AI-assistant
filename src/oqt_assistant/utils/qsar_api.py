@@ -63,7 +63,7 @@ class QSARToolboxAPI:
 
     def _make_request(self, endpoint: str, method: str = 'GET', params: Dict = None, data: Dict = None) -> Any:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        logger.debug(f"Making {method} request to: {url}")
+        logger.debug(f"Making {method} request to: {url} with params: {params}")
         
         try:
             response = self.session.request(
@@ -226,16 +226,26 @@ class QSARToolboxAPI:
             # Restore original timeout
             self.timeout = original_timeout
 
+    # UPDATED: Added include_metadata parameter
     @lru_cache(maxsize=32)
-    def get_all_chemical_data(self, chem_id: str) -> List[Dict[str, Any]]:
-        """Get all experimental data for a chemical with a shorter timeout"""
+    def get_all_chemical_data(self, chem_id: str, include_metadata: bool = True) -> List[Dict[str, Any]]:
+        """Get all experimental data for a chemical, attempting to include metadata."""
         # Use shorter timeout for data fetching to prevent hanging
         original_timeout = self.timeout
-        data_timeout = (5, 30)  # 5s connect, 30s read timeout for potentially larger datasets
+        data_timeout = (5, 60)  # Increased read timeout to 60s as metadata might increase payload size
         
         try:
             self.timeout = data_timeout
-            result = self._make_request(f'data/all/{chem_id}')
+            
+            # Attempt to request metadata if supported by the API endpoint (common pattern)
+            params = {}
+            if include_metadata:
+                # Based on pyQSARToolbox hints, this parameter might be supported
+                params['includeMetadata'] = 'true'
+                logger.info(f"Requesting experimental data for {chem_id} with metadata.")
+
+            result = self._make_request(f'data/all/{chem_id}', params=params)
+            
             # Ensure result is always a list
             if isinstance(result, dict):
                 return [result]
@@ -249,119 +259,116 @@ class QSARToolboxAPI:
         """Apply all calculators to a chemical with robust retry mechanism for 500 errors"""
         return self._make_request_with_robust_retry(f'calculation/all/{chem_id}', max_retries=8)
 
-    def get_profilers(self) -> Dict[str, Any]:
-        """Get all available profilers"""
+    # --- Metabolism (UPDATED) ---
+
+    def get_simulators(self) -> List[Dict[str, Any]]:
+        """Get all available metabolism simulators (GET /api/v6/metabolism)"""
+        try:
+            # According to the provided API spec, the endpoint is just 'metabolism'
+            result = self._make_request('metabolism')
+            if not isinstance(result, list):
+                result = [result] if result else []
+
+            # Filter out the "No metabolism" entry if it exists. 
+            # In the multi-select UI, an empty selection means "skip", so we don't need this option.
+            filtered_result = [s for s in result if s.get("Guid") != "00000000-0000-0000-0000-000000000000"]
+            
+            return filtered_result
+
+        except Exception as e:
+            logger.error(f"Error getting simulators: {str(e)}. Returning fallback list.")
+            # Fallback list if the API call fails (e.g., QSAR Toolbox version differences)
+            # Exclude "No metabolism" from the fallback list as well.
+            return [
+                {"Guid": "7F130D2D-EB7F-4765-A731-FBD5B7D43D6C", "Caption": "Autoxidation simulator"},
+                {"Guid": "6f90b44e-cd34-4b10-be36-e9f2b1d9f5f0", "Caption": "Rat liver S9 metabolism"},
+                {"Guid": "e1853bff-d81c-480b-b3b6-00913c051d4b", "Caption": "In vivo Rat metabolism"},
+                {"Guid": "83142d29-7520-4298-9158-b1271a974336", "Caption": "Microbial metabolism"}
+            ]
+
+    @lru_cache(maxsize=32)
+    def apply_simulator(self, simulator_guid: str, chem_id: str) -> List[Dict[str, Any]]:
+        """Applies a simulator to a chemical, returning metabolites (GET /api/v6/metabolism/{simulatorGuid}/{chemId})"""
+        
+        # Safety check, although UI should prevent this GUID from being passed here.
+        if simulator_guid == "00000000-0000-0000-0000-000000000000":
+            logger.warning("Attempted to run 'No metabolism' simulator via apply_simulator. Skipping.")
+            return []
+
+        # Metabolism simulation can be slow, use a longer timeout and robust retry
+        original_timeout = self.timeout
+        # Increase timeout significantly for metabolism: 5 min read timeout
+        metabolism_timeout = (10, 300) 
+
+        try:
+            self.timeout = metabolism_timeout
+            logger.info(f"Applying metabolism simulator {simulator_guid} to chemical {chem_id} with extended timeout.")
+            # Using robust retry as metabolism can sometimes cause internal server errors (500)
+            result = self._make_request_with_robust_retry(
+                f'metabolism/{simulator_guid}/{chem_id}', 
+                max_retries=3 # Fewer retries due to long timeout and high cost of re-running
+            )
+            
+            if isinstance(result, list):
+                return result
+            elif result:
+                return [result]
+            return []
+        except (QSARTimeoutError, QSARResponseError) as e:
+            logger.error(f"Metabolism simulation failed for simulator {simulator_guid} on chemical {chem_id}: {str(e)}")
+            # Re-raise the exception so the caller (app.py) can handle it and inform the user
+            # We wrap it in QSARResponseError for consistent handling in the app layer
+            raise QSARResponseError(f"Metabolism simulation failed or timed out: {str(e)}")
+        finally:
+            # Restore original timeout
+            self.timeout = original_timeout
+
+    # --- Profiling (Updated) ---
+
+    def get_profilers(self) -> List[Dict[str, Any]]:
+        """Get all available profilers (GET /api/v6/profiling)"""
         try:
             result = self._make_request('profiling')
             if isinstance(result, list):
-                # Convert list of profilers to a dictionary with better naming
-                profilers_dict = {}
-                for i, profiler in enumerate(result):
-                    # Use Caption as key if available, otherwise use a numbered key
-                    if isinstance(profiler, dict) and 'Caption' in profiler:
-                        key = profiler['Caption']
-                    else:
-                        key = f"profiler_{i}"
-                    profilers_dict[key] = profiler
-                return profilers_dict if result else {}
-            return result or {}
+                return result
+            elif result:
+                return [result]
+            return []
         except Exception as e:
             logger.error(f"Error getting profilers: {str(e)}")
-            return {}
+            return []
     
-    def get_simulators(self) -> Dict[str, Any]:
-        """Get all available metabolism simulators"""
-        try:
-            # Attempt to get a list of all available simulators
-            result = self._make_request('metabolism/simulators')
-            if isinstance(result, list):
-                # Convert list of simulators to a dictionary
-                simulators_dict = {}
-                for i, simulator in enumerate(result):
-                    # Use Caption as key if available, otherwise use a numbered key
-                    if isinstance(simulator, dict) and 'Caption' in simulator:
-                        key = simulator['Caption']
-                    else:
-                        key = f"simulator_{i}"
-                    simulators_dict[key] = simulator
-                return simulators_dict if result else {}
-            return result or {}
-        except Exception as e:
-            logger.error(f"Error getting simulators: {str(e)}")
-            # Return a default set of well-known simulator GUIDs
-            return {
-                "No metabolism": {"Guid": "00000000-0000-0000-0000-000000000000", "Caption": "No metabolism"},
-                "Autoxidation simulator": {"Guid": "7F130D2D-EB7F-4765-A731-FBD5B7D43D6C", "Caption": "Autoxidation simulator"},
-                "Rat liver S9 metabolism": {"Guid": "6f90b44e-cd34-4b10-be36-e9f2b1d9f5f0", "Caption": "Rat liver S9 metabolism"}
-            }
         
     @lru_cache(maxsize=16)
-    def get_chemical_profiling(self, chem_id: str) -> Dict[str, Any]:
-        """Get profiling results for a specific chemical using all available profilers"""
+    def get_chemical_profiling(self, chem_id: str, simulator_guid: str = "00000000-0000-0000-0000-000000000000") -> Dict[str, Any]:
+        """Get profiling results for a specific chemical using optimized profilers."""
         try:
             # Get available profilers first
-            profilers = self.get_profilers()
-            logger.info(f"Got {len(profilers)} profilers")
+            available_profilers_list = self.get_profilers()
+            logger.info(f"Got {len(available_profilers_list)} available profilers")
             
-            # Get available simulators
-            simulators = self.get_simulators()
-            logger.info(f"Got {len(simulators)} simulators")
-            
-            # Use the "No metabolism" simulator by default
-            default_simulator_guid = "00000000-0000-0000-0000-000000000000"
-            
-            # Skip the problematic /all endpoint and go directly to individual profilers
-            logger.info(f"Skipping profiling/all endpoint due to timeout issues, using individual profilers")
-            all_results = None
-            
-            # Extract profiler information for display
-            profiler_list = []
-            successful_results = {}
-            
-            # Create a list of profilers for display
-            for key, profiler in profilers.items():
+            # Prepare profiler information for display
+            profiler_display_list = []
+            profilers_by_name = {}
+            for profiler in available_profilers_list:
                 if isinstance(profiler, dict):
-                    caption = profiler.get('Caption', '')
+                    caption = profiler.get('Caption', 'Unknown')
                     guid = profiler.get('Guid', '')
                     profiler_type = profiler.get('Type', 'Unknown')
                     
                     if caption and guid:
-                        # Add to display list
-                        profiler_list.append({
+                        profilers_by_name[caption] = profiler
+                        profiler_display_list.append({
                             'name': caption,
                             'type': profiler_type,
                             'guid': guid,
-                            'status': 'Available',
-                            'description': 'This profiler can be used to categorize chemicals based on structural features'
+                            'status': 'Available'
                         })
-            
-            # If we got results from the /all endpoint, return them
-            if all_results:
-                return {
-                    'results': all_results,
-                    'available_profilers': profiler_list,
-                    'status': 'Success',
-                    'note': 'Successfully profiled the chemical with all profilers'
-                }
-            
-            # If that fails, try individual profilers with the right parameters
-            # First, try all profilers using their GUIDs
-            logger.info(f"Trying to profile with individual profilers")
-            
-            # Try these known simulator GUIDs in order
-            simulator_guids = [
-                "00000000-0000-0000-0000-000000000000",  # No metabolism (default)
-                "7F130D2D-EB7F-4765-A731-FBD5B7D43D6C",  # Autoxidation simulator
-                "6f90b44e-cd34-4b10-be36-e9f2b1d9f5f0"   # Rat liver S9 metabolism
-            ]
-            
-            # Attempt to profile with all available profilers
-            attempts = 0
-            max_attempts = 80  # Set high to try all profilers
+
             
             # List of PROVEN fast profilers (optimized balance of speed vs coverage)
-            fast_profilers = [
-                # These profilers respond in under 5 seconds consistently
+            # This optimization addresses the practical limitations of the QSAR Toolbox API responsiveness.
+            fast_profilers_names = [
                 "DNA binding by OASIS",
                 "Protein binding by OASIS",
                 "Protein binding alerts for Chromosomal aberration by OASIS",
@@ -377,109 +384,61 @@ class QSARToolboxAPI:
                 "Organic functional groups, Norbert Haider (checkmol)"
             ]
             
-            # Simple approach: try only proven fast profilers with a reasonable timeout
+            successful_results = {}
+            # Set a reasonable timeout for individual profiling requests
             original_timeout = self.timeout
-            reasonable_timeout = (5, 15)  # 5s connect, 15s read
+            profiling_timeout = (5, 15)  # 5s connect, 15s read
             
             try:
                 # Set the timeout once
-                self.timeout = reasonable_timeout
+                self.timeout = profiling_timeout
                 
-                # Try only fast profilers
-                fast_profiler_guids = {}
-                
-                # Build dictionary of fast profilers
-                for profiler_name in fast_profilers:
-                    for key, profiler in profilers.items():
-                        if isinstance(profiler, dict) and profiler.get('Caption', ''):
-                            caption = profiler.get('Caption', '')
-                            if profiler_name.lower() in caption.lower():
-                                fast_profiler_guids[caption] = profiler.get('Guid', '')
-                
-                # Only try the fast profilers
-                for name, guid in fast_profiler_guids.items():
-                    if guid == '':
-                        continue
+                for name in fast_profilers_names:
+                    if name in profilers_by_name:
+                        profiler = profilers_by_name[name]
+                        guid = profiler.get('Guid')
+                        logger.info(f"Attempting to profile with FAST profiler: {name}")
                         
-                    attempts += 1
-                    logger.info(f"Attempting to profile with FAST profiler: {name}")
-                    
-                    try:
-                        # Make the profiling request with profiler and simulator GUIDs
-                        result = self._make_request(f'profiling/{guid}/{chem_id}/{default_simulator_guid}')
-                        if result:
-                            logger.info(f"Successfully profiled with {name}")
-                            successful_results[name] = {
-                                'result': result,
-                                'type': 'Profiler',
-                                'guid': guid
-                            }
-                    except Exception as e:
-                        logger.warning(f"Error with profiler {name}: {str(e)}")
+                        try:
+                            # Make the profiling request (GET /api/v6/profiling/{profilerGuid}/{chemId}/{simulatorGuid})
+                            # We use the provided simulator_guid (defaulting to 'No metabolism')
+                            result = self._make_request(f'profiling/{guid}/{chem_id}/{simulator_guid}')
+                            if result:
+                                logger.info(f"Successfully profiled with {name}")
+                                successful_results[name] = {
+                                    'result': result,
+                                    'type': profiler.get('Type', 'Profiler'),
+                                    'guid': guid
+                                }
+                        except Exception as e:
+                            logger.warning(f"Error with profiler {name} (GUID: {guid}): {str(e)}")
             finally:
                 # Restore original timeout
                 self.timeout = original_timeout
             
-            # Try the relevant profilers endpoint if we didn't get enough results
-            if len(successful_results) < 5:
-                try:
-                    relevant_profilers = self._make_request('profiling/relevancies', 
-                                                           params={'position': 'Endpoints'})
-                    
-                    if isinstance(relevant_profilers, list) and len(relevant_profilers) > 0:
-                        logger.info(f"Got {len(relevant_profilers)} relevant profilers")
-                        
-                        # Try each relevant profiler
-                        for relevant in relevant_profilers:
-                            if attempts >= max_attempts:
-                                break
-                                
-                            if isinstance(relevant, dict):
-                                rel_guid = relevant.get('Guid', '')
-                                rel_name = relevant.get('Caption', f"Relevant Profiler {attempts}")
-                                
-                                if rel_guid and rel_name not in successful_results:
-                                    attempts += 1
-                                    
-                                    # Try with default simulator
-                                    try:
-                                        result = self._make_request(f'profiling/{rel_guid}/{chem_id}/{default_simulator_guid}')
-                                        if result:
-                                            logger.info(f"Successfully profiled with relevant profiler {rel_name}")
-                                            successful_results[rel_name] = {
-                                                'result': result,
-                                                'type': 'Relevant Profiler',
-                                                'guid': rel_guid
-                                            }
-                                    except Exception as e:
-                                        logger.warning(f"Failed to profile with relevant profiler {rel_name}: {str(e)}")
-                except Exception as e:
-                    logger.warning(f"Failed to get relevant profilers: {str(e)}")
-            
-            # Return results if we got any
+            # Return results
             if successful_results:
-                logger.info(f"Successfully profiled with {len(successful_results)} profilers")
+                status = 'Success' if len(successful_results) == len(fast_profilers_names) else 'Partial success'
+                note = f'Successfully profiled using {len(successful_results)} optimized profilers.'
                 return {
                     'results': successful_results,
-                    'available_profilers': profiler_list,
-                    'status': 'Partial success',
-                    'note': f'Successfully profiled with {len(successful_results)} out of {len(profilers)} profilers'
+                    'available_profilers': profiler_display_list,
+                    'status': status,
+                    'note': note
+                }
+            else:
+                return {
+                    'available_profilers': profiler_display_list,
+                    'status': 'Limited',
+                    'note': 'Could not retrieve profiling results using optimized profilers within the time limit. Complete profiling is available in the QSAR Toolbox desktop application.'
                 }
             
-            # If we couldn't get any profiling results, return just the profiler list
-            logger.info(f"Could not get any profiling results, returning only profiler list")
-            return {
-                'available_profilers': profiler_list,
-                'status': 'Limited',
-                'note': 'Could not retrieve profiling results with the current API configuration. The complete profiling results are available in the QSAR Toolbox desktop application.'
-            }
-            
         except Exception as e:
-            logger.error(f"Error getting profiling results: {str(e)}")
+            logger.error(f"Error during chemical profiling orchestration: {str(e)}")
             return {
                 'status': 'Error',
                 'error': str(e),
-                'note': 'Unable to retrieve profiler information'
+                'note': 'Unable to retrieve profiler information or execute profiling.'
             }
     
     def get_relevant_profilers(self, endpoint_position: str = "Endpoints") -> List[Dict]:
