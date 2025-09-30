@@ -256,8 +256,56 @@ class QSARToolboxAPI:
 
     @lru_cache(maxsize=32)
     def apply_all_calculators(self, chem_id: str) -> Dict[str, Any]:
-        """Apply all calculators to a chemical with robust retry mechanism for 500 errors"""
-        return self._make_request_with_robust_retry(f'calculation/all/{chem_id}', max_retries=8)
+        """
+        Apply all calculators to a chemical.
+
+        Change: **Fail-fast profile** to prevent the UI from hanging at
+        “📊 Calculating chemical properties…”. We run with a reduced timeout budget
+        and far fewer retries, and return `{}` on persistent failure so the
+        rest of the pipeline continues.
+        """
+        original_timeout = self.timeout
+        # Conservative per-attempt timeout for this heavy endpoint
+        self.timeout = (8, 60)  # 8s connect, 60s read
+
+        try:
+            try:
+                # Limit retries to avoid minute-long stalls
+                result = self._make_request_with_robust_retry(f'calculation/all/{chem_id}', max_retries=2)
+                # Normalize list -> index dict for consistency
+                if isinstance(result, list):
+                    result = {str(i): v for i, v in enumerate(result)}
+                result = result or {}
+
+                # NEW: Attach per-calculator metadata envelope (non-breaking, additive)
+                for k, rec in list(result.items()):
+                    if not isinstance(rec, dict):
+                        continue
+                    calc_name = rec.get("CalculatorName") or rec.get("Parameter") or "Unknown"
+                    family = (rec.get("Calculation") or {}).get("Family", "") or rec.get("Parameter") or ""
+                    # Light-touch metadata (safe defaults)
+                    rec["ModelInfo"] = {
+                        "model_name": calc_name,
+                        "model_version": rec.get("Version") or "N/A",
+                        "software": "OECD QSAR Toolbox v6.x",
+                        "developer": "N/A",
+                        "endpoint": family or "N/A",
+                        "algorithm_summary": "N/A",
+                        "training_set_summary": None,
+                        "validation_summary": None,
+                        "applicability_domain_method": "N/A",
+                        "applicability_domain_decision_for_query": "N/A",
+                        "parameters": {},
+                        "references": []
+                    }
+                    result[k] = rec
+                return result
+            except (QSARTimeoutError, QSARResponseError, QSARConnectionError) as e:
+                logger.warning(f"apply_all_calculators failed fast for {chem_id}: {e}")
+                return {}  # fail fast; let UI proceed
+        finally:
+            # Restore original timeout
+            self.timeout = original_timeout
 
     # --- Metabolism (UPDATED) ---
 
@@ -340,8 +388,15 @@ class QSARToolboxAPI:
     
         
     @lru_cache(maxsize=16)
-    def get_chemical_profiling(self, chem_id: str, simulator_guid: str = "00000000-0000-0000-0000-000000000000") -> Dict[str, Any]:
-        """Get profiling results for a specific chemical using optimized profilers."""
+    def get_chemical_profiling(
+        self,
+        chem_id: str,
+        simulator_guid: str = "00000000-0000-0000-0000-000000000000",
+        selected_profiler_guids: tuple | None = None
+    ) -> Dict[str, Any]:
+        """Get profiling results for a specific chemical.
+        If `selected_profiler_guids` (GUID tuple) is provided, run exactly those.
+        Otherwise, use an optimized default subset (fast profilers)."""
         try:
             # Get available profilers first
             available_profilers_list = self.get_profilers()
@@ -350,6 +405,7 @@ class QSARToolboxAPI:
             # Prepare profiler information for display
             profiler_display_list = []
             profilers_by_name = {}
+            profilers_by_guid = {}
             for profiler in available_profilers_list:
                 if isinstance(profiler, dict):
                     caption = profiler.get('Caption', 'Unknown')
@@ -358,6 +414,7 @@ class QSARToolboxAPI:
                     
                     if caption and guid:
                         profilers_by_name[caption] = profiler
+                        profilers_by_guid[guid] = profiler
                         profiler_display_list.append({
                             'name': caption,
                             'type': profiler_type,
@@ -393,33 +450,45 @@ class QSARToolboxAPI:
                 # Set the timeout once
                 self.timeout = profiling_timeout
                 
-                for name in fast_profilers_names:
-                    if name in profilers_by_name:
-                        profiler = profilers_by_name[name]
-                        guid = profiler.get('Guid')
-                        logger.info(f"Attempting to profile with FAST profiler: {name}")
-                        
-                        try:
-                            # Make the profiling request (GET /api/v6/profiling/{profilerGuid}/{chemId}/{simulatorGuid})
-                            # We use the provided simulator_guid (defaulting to 'No metabolism')
-                            result = self._make_request(f'profiling/{guid}/{chem_id}/{simulator_guid}')
-                            if result:
-                                logger.info(f"Successfully profiled with {name}")
-                                successful_results[name] = {
-                                    'result': result,
-                                    'type': profiler.get('Type', 'Profiler'),
-                                    'guid': guid
-                                }
-                        except Exception as e:
-                            logger.warning(f"Error with profiler {name} (GUID: {guid}): {str(e)}")
+                # Determine which profilers to run
+                run_pairs: list[tuple[str, str]] = []
+                if selected_profiler_guids:
+                    # Run exactly what the user selected (GUIDs)
+                    for g in selected_profiler_guids:
+                        prof = profilers_by_guid.get(g)
+                        if prof:
+                            run_pairs.append( (prof.get('Guid'), prof.get('Caption') or prof.get('Name') or g) )
+                else:
+                    # Fallback to optimized default by name
+                    for name in fast_profilers_names:
+                        if name in profilers_by_name:
+                            guid = profilers_by_name[name].get('Guid')
+                            if guid:
+                                run_pairs.append( (guid, name) )
+
+                for guid, label in run_pairs:
+                    logger.info(f"Attempting to profile with: {label}")
+                    try:
+                        result = self._make_request(f'profiling/{guid}/{chem_id}/{simulator_guid}')
+                        if result:
+                            logger.info(f"Successfully profiled with {label}")
+                            p = profilers_by_guid.get(guid, {})
+                            successful_results[label] = {
+                                'result': result,
+                                'type': p.get('Type', 'Profiler'),
+                                'guid': guid
+                            }
+                    except Exception as e:
+                        logger.warning(f"Error with profiler {label} (GUID: {guid}): {str(e)}")
             finally:
                 # Restore original timeout
                 self.timeout = original_timeout
             
             # Return results
             if successful_results:
-                status = 'Success' if len(successful_results) == len(fast_profilers_names) else 'Partial success'
-                note = f'Successfully profiled using {len(successful_results)} optimized profilers.'
+                target_count = len(run_pairs)
+                status = 'Success' if len(successful_results) == target_count else 'Partial success'
+                note = f"Successfully profiled with {len(successful_results)}/{target_count} selected profilers."
                 return {
                     'results': successful_results,
                     'available_profilers': profiler_display_list,
@@ -430,7 +499,7 @@ class QSARToolboxAPI:
                 return {
                     'available_profilers': profiler_display_list,
                     'status': 'Limited',
-                    'note': 'Could not retrieve profiling results using optimized profilers within the time limit. Complete profiling is available in the QSAR Toolbox desktop application.'
+                    'note': 'No profiler results returned within the time limit. Consider running a smaller subset.'
                 }
             
         except Exception as e:

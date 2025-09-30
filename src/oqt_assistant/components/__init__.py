@@ -2,4 +2,6 @@
 #
 # SPDX-License-Identifier: MIT
 
+from . import wizard
+
 # This file marks the components directory as a Python package.

@@ -11,11 +11,28 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 import pandas as pd
+import logging # Ensure logging is imported
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file (adjust path for src layout)
 # This is kept for fallback/default values if users prefer environment variables
 try:
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env'))
+    # Adjust the pathfinding logic to be more robust
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Assuming app.py is in src/oqt_assistant, the root is two levels up from there (outside src)
+    # If running from the package installation, the structure might differ slightly, but this aims for the development structure root.
+    project_root = os.path.dirname(os.path.dirname(current_dir)) 
+    dotenv_path = os.path.join(project_root, '.env')
+    
+    # Fallback to the original logic if the above assumption is wrong in some environments
+    if not os.path.exists(dotenv_path):
+         fallback_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env')
+         if os.path.exists(fallback_path):
+             dotenv_path = fallback_path
+
+    load_dotenv(dotenv_path)
 except Exception:
     print("Could not load .env file (optional).")
 
@@ -38,8 +55,15 @@ from oqt_assistant.utils.llm_utils import (
 from oqt_assistant.components.search import render_search_section
 from oqt_assistant.components.results import render_results_section, render_download_section
 
+# Removed unused import of wizard
+
 # NEW IMPORT
 from oqt_assistant.utils.pdf_generator import generate_pdf_report
+from oqt_assistant.components.guided_wizard import run_guided_wizard
+# Import data formatter and filters needed in execute_analysis
+# UPDATED IMPORT: Added format_chemical_data
+from oqt_assistant.utils.data_formatter import process_experimental_metadata, process_properties, format_chemical_data
+from oqt_assistant.utils.filters import filter_experimental_records # NEW IMPORT
 
 
 # Define the maximum number of experimental records to send to LLM agents
@@ -76,8 +100,109 @@ LLM_MODELS = {
     }
 }
 
+# ... (Keep existing Callbacks for Guided Wizard: _get_llm_models, _ping_qsar, _estimate_cost, _on_run_pipeline) ...
+# Callbacks for Guided Wizard
+def _get_llm_models():
+    return LLM_MODELS
+
+def _ping_qsar(api_url: str):
+    # Used by wizard for validation step.
+    try:
+        api_client = QSARToolboxAPI(base_url=api_url, timeout=(5, 10))
+        version_info = api_client.get_version()
+        if version_info:
+            # Return True and a message (e.g., version info)
+            # Ensure version_info is a dict before accessing keys
+            if isinstance(version_info, dict):
+                 return True, f"QSAR Toolbox v{version_info.get('version', 'Unknown')}"
+            return True, "Connection successful (Version info format unexpected)."
+        return False, "Connection successful but could not retrieve version."
+    except Exception as e:
+        return False, str(e)
+
+def _estimate_cost(model_id: str, max_output_tokens: int):
+    # Stub remains the same
+    return {"model": model_id, "output_tokens": max_output_tokens, "note": "Illustrative estimate"}
+
+# UPDATED: Implemented _on_run_pipeline to use execute_analysis (sync wrapper)
+def _on_run_pipeline(config: dict):
+    # This function is called synchronously by the wizard upon completion.
+    
+    # Mapping wizard config to execute_analysis parameters.
+
+    # Chemical identification (Wizard ensures these are present)
+    # Use the identifier used for the search initially
+    identifier = config.get("identifier")
+    search_type = config.get("search_type")
+
+    if not identifier:
+            st.error("Chemical identifier is missing from wizard configuration.")
+            return
+
+    # Context composition (Wizard combines these fields)
+    context = config.get("context")
+    if not context:
+        context = "General chemical hazard assessment (Guided Workflow)."
+
+    simulator_guids = config.get("simulator_guids", [])
+
+    # Use the configuration stored in the main session state (Wizard Step 1 ensures it's valid)
+    llm_config = st.session_state.llm_config.copy() # Make a copy to allow overrides
+    qsar_config = st.session_state.qsar_config
+
+    # Apply LLM overrides if present (NEW)
+    if config.get("llm_temperature_override") is not None:
+        llm_config["temperature_override"] = config["llm_temperature_override"]
+    
+    if config.get("llm_max_tokens_override") is not None:
+        llm_config["max_tokens_override"] = config["llm_max_tokens_override"]
+
+    # Scope Config mapping (Wizard Step 4 and 5), including new exclusions and RA strategy
+    scope_config = {
+        "include_properties": config.get("include_properties", True),
+        "include_experimental": config.get("include_experimental", True),
+        "include_profiling": config.get("include_profiling", True),
+        # New Exclusions
+        "exclude_adme_tk": config.get("exclude_adme_tk", False),
+        "exclude_mammalian_tox": config.get("exclude_mammalian_tox", False),
+        # New Read-Across details (passed via scope for LLM context)
+        "rax_strategy": config.get("rax_strategy", "Hybrid"),
+        "rax_similarity_basis": config.get("rax_similarity_basis", "Combined"),
+    }
+
+    # Store inputs in session state for persistence in results view
+    st.session_state.input_identifier = identifier
+    st.session_state.input_search_type = search_type
+    st.session_state.input_context = context
+    st.session_state.selected_simulator_guids = simulator_guids
+
+    
+    # Run execute_analysis (the synchronous wrapper)
+    try:
+        execute_analysis(
+            identifier=identifier,
+            search_type=search_type,
+            context=context,
+            simulator_guids=simulator_guids,
+            llm_config=llm_config,
+            qsar_config=qsar_config,
+            scope_config=scope_config
+        )
+
+        # Upon successful execution start/completion, clear the wizard state.
+        if "wiz" in st.session_state:
+            del st.session_state["wiz"]
+
+        # Force a rerun. The main() function will now detect analysis_results and display them.
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"Error running analysis pipeline from wizard: {e}")
+        logger.error(f"Error running analysis pipeline from wizard: {e}")
+
+
+# ... (Keep existing helper functions: initialize_session_state, update_progress, check_connection) ...
 def initialize_session_state():
-    # ... (This function remains the same)
     """Initialize or reset session state variables"""
     defaults = {
         'analysis_results': None, # Raw data from QSAR API
@@ -99,6 +224,9 @@ def initialize_session_state():
         # UPDATED: Metabolism state
         'available_simulators': [],
         'selected_simulator_guids': [], # Changed from single GUID to list
+        # NEW: Profiler catalog + selection
+        'available_profilers': [],
+        'selected_profiler_guids': [],
     }
 
     # --- Configuration State Initialization ---
@@ -117,7 +245,10 @@ def initialize_session_state():
             'model_name': default_model_name, # Display name
             'api_key': default_api_key,
             'api_base': None, # Used for OpenRouter
-            'config_complete': bool(default_api_key) # Complete if API key is pre-filled
+            'config_complete': bool(default_api_key),
+            # Default parameters (used if not overridden)
+            'temperature': 0.1,
+            'max_tokens': 4096,
         }
 
     if 'qsar_config' not in st.session_state:
@@ -135,40 +266,63 @@ def initialize_session_state():
 
 
 def update_progress(value: float, description: str):
-    # ... (This function remains the same)
     """Update progress bar with value and description"""
     st.session_state.progress_value = value
     st.session_state.progress_description = description
     # Ensure progress bar exists or create it
     if 'progress_bar' not in st.session_state:
-        st.session_state.progress_bar = st.progress(0.0)
+        # Check if the current context allows creating UI elements
+        try:
+            st.session_state.progress_bar = st.progress(0.0)
+        except st.errors.StreamlitAPIException:
+            # If we cannot create the progress bar (e.g., running outside main streamlit thread), skip update
+            logger.warning("Could not create progress bar outside Streamlit context.")
+            return
+
     # Check if progress bar element still exists before updating
     try:
         st.session_state.progress_bar.progress(value, text=f"Status: {description}")
     except Exception: # Handle cases where the element might have been removed
-        st.session_state.progress_bar = st.progress(value,
-                                                    text=f"Status: {description}")
+        try:
+            st.session_state.progress_bar = st.progress(value,
+                                                        text=f"Status: {description}")
+        except st.errors.StreamlitAPIException:
+            logger.warning("Could not update progress bar outside Streamlit context.")
 
 
 
 def check_connection(api_client: QSARToolboxAPI) -> bool:
-    # ... (This function remains the same)
     """Check if QSAR Toolbox API is accessible and fetch initial data like simulators."""
     try:
         api_client.get_version()
         # Fetch simulators upon successful connection (NEW)
         simulators = api_client.get_simulators()
         st.session_state.available_simulators = simulators
+        # NEW: also cache the profiler catalog
+        profilers = api_client.get_profilers()
+        st.session_state.available_profilers = profilers
         
         # Validate existing selection against available simulators
         valid_selections = []
         available_guids = [s['Guid'] for s in simulators]
         
+        # Ensure selected_simulator_guids exists
+        if 'selected_simulator_guids' not in st.session_state:
+            st.session_state.selected_simulator_guids = []
+
         for guid in st.session_state.selected_simulator_guids:
             if guid in available_guids:
                 valid_selections.append(guid)
         
         st.session_state.selected_simulator_guids = valid_selections
+
+        # Validate selected profilers against available profilers
+        valid_prof = []
+        profiler_guids = [p.get('Guid') for p in profilers if isinstance(p, dict)]
+        for guid in st.session_state.get('selected_profiler_guids', []):
+            if guid in profiler_guids:
+                valid_prof.append(guid)
+        st.session_state.selected_profiler_guids = valid_prof
 
         st.session_state.connection_status = True
         return True
@@ -182,9 +336,9 @@ def check_connection(api_client: QSARToolboxAPI) -> bool:
         return False
 
 
+# ... (Keep existing render functions: render_reports_section, render_specialist_downloads) ...
 # Modify render_reports_section to display the single final report
 def render_reports_section(identifier: str):
-    # ... (This function remains the same)
     """Render the final synthesized report section."""
     st.header("Synthesized Analysis Report")
 
@@ -234,7 +388,7 @@ def render_specialist_downloads(identifier: str):
             st.sidebar.error(f"Error generating PDF: {e}")
             # Optionally log the full traceback
             import traceback
-            traceback.print_exc()
+            logger.error(f"Error generating PDF: {e}\n{traceback.format_exc()}")
 
 
     # --- Existing Downloads (Log and Specialist TXT) ---
@@ -281,10 +435,11 @@ def render_specialist_downloads(identifier: str):
                 )
 
 
+# UPDATED: Increased version number for UI fixes
 def generate_comprehensive_log(
     inputs: Dict[str, Any],
     llm_config: Dict[str, Any], qsar_config: Dict[str, Any],
-    raw_qsar_data: Dict[str, Any], specialist_analyses: Dict[str, str],
+    processed_qsar_data: Dict[str, Any], specialist_analyses: Dict[str, str],
     synthesized_report: str
 ) -> Dict[str, Any]:
     """Generates a comprehensive JSON log of the entire analysis run for transparency."""
@@ -299,7 +454,7 @@ def generate_comprehensive_log(
         "metadata": {
             "timestamp": datetime.now().isoformat(),
             "tool_name": "O'QT Assistant",
-            "version": "1.3.0" # Updated version for PDF reporting
+            "version": "1.4.3" # Updated version for UI fixes
         },
         "configuration": {
             "llm_configuration": masked_llm_config,
@@ -307,7 +462,8 @@ def generate_comprehensive_log(
         },
         "inputs": inputs,
         "data_retrieval": {
-            "raw_qsar_toolbox_data": raw_qsar_data
+            # This now contains the processed/filtered data used by the agents
+            "processed_qsar_toolbox_data": processed_qsar_data 
         },
         "analysis": {
             "specialist_agent_outputs": specialist_analyses,
@@ -317,13 +473,21 @@ def generate_comprehensive_log(
     return log
 
 
-# UPDATED: Modified perform_chemical_analysis to accept a list of simulator_guids
-def perform_chemical_analysis(identifier: str, search_type: str, context: str, simulator_guids: List[str]) -> Optional[Dict[str, Any]]:
-    # ... (This function remains the same)
+# UPDATED: Modified perform_chemical_analysis to use format_chemical_data
+def perform_chemical_analysis(identifier: str, search_type: str, context: str, simulator_guids: List[str], qsar_config: Dict[str, Any], scope_config: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
     """Perform chemical data retrieval using QSAR Toolbox API (Synchronous)."""
+    
+    if scope_config is None:
+        # Default scope (fetch everything, compatible with Standard mode)
+        scope_config = {
+            "include_properties": True,
+            "include_experimental": True,
+            "include_profiling": True,
+        }
+        
     try:
-        # Initialize API client using configuration from session state
-        api_url = st.session_state.qsar_config.get('api_url')
+        # Initialize API client using provided configuration
+        api_url = qsar_config.get('api_url')
 
         if not api_url:
             raise ValueError("QSAR Toolbox API URL is not configured.")
@@ -334,9 +498,9 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             max_retries=15  # Use higher retry count for better reliability
         )
 
-        # st.write(f"Attempting connection to API at: {api_url}")
+        # Use the check_connection utility which also updates session state connection status
         if not check_connection(api_client):
-            # Error message is displayed by check_connection or the main loop status check
+            # Error message handled by check_connection or UI status display
             return None
 
         # --- Sequential Data Fetching ---
@@ -350,17 +514,25 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
                     identifier,
                     search_option=SearchOptions.EXACT_MATCH   # <- "0"
                 )
-            else:
+            elif search_type == 'smiles': # Explicitly handle smiles
                 search_result = api_client.search_by_smiles(identifier)
+            else:
+                # Fallback/CAS handling (assuming API handles CAS via name search if search_type is not name/smiles)
+                if hasattr(api_client.search_by_name, 'cache_clear'):
+                        api_client.search_by_name.cache_clear()
+                search_result = api_client.search_by_name(
+                    identifier,
+                    search_option=SearchOptions.EXACT_MATCH
+                )
 
             if not search_result:
-                raise QSARResponseError(f"Chemical not found: {identifier}")
+                raise QSARResponseError(f"Chemical not found: {identifier} (using search type: {search_type})")
         except QSARTimeoutError:
              st.warning("Search request timed out, retrying...")
              if st.session_state.retry_count < st.session_state.max_retries:
                  st.session_state.retry_count += 1
-                 # Pass simulator_guids in the recursive call
-                 return perform_chemical_analysis(identifier, search_type, context, simulator_guids)
+                 # Pass all arguments in the recursive call
+                 return perform_chemical_analysis(identifier, search_type, context, simulator_guids, qsar_config, scope_config)
              else:
                  raise QSARTimeoutError("Maximum retries exceeded during chemical search")
 
@@ -372,7 +544,8 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
         else:
             selected_chemical_data = search_result          # single-dict response
 
-        chemical_data = selected_chemical_data # Use the selected data
+        # UPDATED: Format the basic chemical data using the formatter for consistency
+        chemical_data = format_chemical_data(selected_chemical_data)
 
         chem_id = chemical_data.get('ChemId')
         if not chem_id:
@@ -395,6 +568,9 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             simulators_completed = 0
             
             # Get simulator names for better logging
+            # Ensure available_simulators is populated in session state
+            if 'available_simulators' not in st.session_state:
+                 st.session_state.available_simulators = []
             simulator_map = {s['Guid']: s['Caption'] for s in st.session_state.available_simulators}
 
             for i, simulator_guid in enumerate(simulator_guids):
@@ -462,38 +638,59 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
                 metabolism_data["note"] = "All selected metabolism simulations failed."
 
 
-        update_progress(0.4, "📊 Calculating chemical properties...") # Adjusted progress
-        try:
-            raw_props = api_client.apply_all_calculators(chem_id) or {}
-            # Flatten list‑of‑records → {parameter: value} if needed, though qsar_api.py should handle this
-            if isinstance(raw_props, list):
-                properties = {
-                    (rec.get("Parameter") or rec.get("Name", f"prop_{i}")).strip(): rec.get("Value")
-                    for i, rec in enumerate(raw_props) if isinstance(rec, dict)
-                }
-            elif isinstance(raw_props, dict):
-                 properties = raw_props
-            else:
-                 properties = {}
-        except Exception as e:
-            st.warning(f"Error retrieving or processing properties: {str(e)}")
-            properties = {}
+        # --- Properties Calculation (Conditional based on scope_config) ---
+        # UPDATED: Use dedicated formatter
+        properties = {}
+        if scope_config.get("include_properties"):
+            update_progress(0.4, "📊 Calculating chemical properties...") # Adjusted progress
+            try:
+                raw_props = api_client.apply_all_calculators(chem_id) or {}
+                
+                # Use the dedicated formatter to process properties (handles various input formats)
+                # This replaces the previous manual processing logic that caused the UI issue.
+                properties = process_properties(raw_props)
 
-        update_progress(0.6, "🧪 Retrieving experimental data (with metadata)...") # Adjusted progress
-        try:
-            # Data retrieval now attempts to include metadata by default
-            experimental_data = api_client.get_all_chemical_data(chem_id) or []
-        except Exception as e:
-            st.warning(f"Error retrieving experimental data: {str(e)}")
-            experimental_data = []
+            except Exception as e:
+                st.warning(f"Error retrieving or processing properties: {str(e)}")
+                properties = {}
+        else:
+            update_progress(0.4, "📊 Skipping chemical properties (per configuration)...")
 
-        update_progress(0.75, "🔬 Retrieving profiling data...") # Adjusted progress
-        try:
-            # We profile the parent compound, typically using 'No metabolism' (default GUID in API client)
-            profiling_data = api_client.get_chemical_profiling(chem_id) or {}
-        except Exception as e:
-            st.warning(f"Error retrieving profiling data: {str(e)}")
-            profiling_data = {'status': 'Error', 'note': f'Error retrieving profiling data: {str(e)}'}
+
+        # --- Experimental Data Retrieval (Conditional based on scope_config) ---
+        experimental_data = []
+        if scope_config.get("include_experimental"):
+            update_progress(0.6, "🧪 Retrieving experimental data (with metadata)...") # Adjusted progress
+            try:
+                # Data retrieval now attempts to include metadata by default
+                experimental_data = api_client.get_all_chemical_data(chem_id) or []
+            except Exception as e:
+                st.warning(f"Error retrieving experimental data: {str(e)}")
+                experimental_data = []
+        else:
+            update_progress(0.6, "🧪 Skipping experimental data (per configuration)...")
+
+
+        # --- Profiling Data Retrieval (Conditional based on scope_config) ---
+        profiling_data = {}
+        if scope_config.get("include_profiling"):
+            update_progress(0.75, "🔬 Retrieving profiling data...") # Adjusted progress
+            try:
+                # We profile the parent compound; allow user-selected profilers when provided
+                selected_prof_guids = []
+                if isinstance(scope_config, dict):
+                    selected_prof_guids = scope_config.get("selected_profiler_guids", []) or []
+                profiling_data = api_client.get_chemical_profiling(
+                    chem_id,
+                    # keep default simulator (No metabolism)
+                    selected_profiler_guids=tuple(selected_prof_guids) if selected_prof_guids else None
+                ) or {}
+            except Exception as e:
+                st.warning(f"Error retrieving profiling data: {str(e)}")
+                profiling_data = {'status': 'Error', 'note': f'Error retrieving profiling data: {str(e)}'}
+        else:
+            update_progress(0.75, "🔬 Skipping profiling data (per configuration)...")
+
 
         update_progress(0.8, "✅ QSAR data retrieval complete!")
 
@@ -519,12 +716,17 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             except Exception:
                 pass # Ignore if already gone
             if 'progress_bar' in st.session_state:
-               del st.session_state.progress_bar
-        raise # Re-raise the exception to be caught in main
+               # Attempt to delete safely
+               try:
+                   del st.session_state.progress_bar
+               except KeyError:
+                   pass
+        raise # Re-raise the exception to be caught in execute_analysis
 
 
+# ... (Keep existing functions: render_configuration_ui, render_methodology_and_transparency) ...
+# render_configuration_ui (remains largely the same, adding default parameter display)
 def render_configuration_ui():
-    # ... (This function remains the same)
     """Renders the configuration UI in the sidebar for LLM and QSAR API settings."""
     st.sidebar.header("Configuration")
 
@@ -620,6 +822,14 @@ def render_configuration_ui():
     else:
         st.session_state.llm_config['api_base'] = None
 
+    # Display Default Parameters (can be overridden in Guided Wizard)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Default LLM Parameters:**")
+    st.sidebar.markdown(f"Temperature: {st.session_state.llm_config['temperature']}")
+    st.sidebar.markdown(f"Max Tokens: {st.session_state.llm_config['max_tokens']}")
+    st.sidebar.info("These parameters can be overridden during a Guided Wizard run.")
+
+
     # Check configuration completeness
     st.session_state.llm_config['config_complete'] = bool(api_key and model_name)
 
@@ -640,14 +850,12 @@ def render_configuration_ui():
         st.sidebar.warning("LLM API Key required.")
 
 
-
 def render_methodology_and_transparency():
-    # ... (This function remains the same)
     """Renders information about the tool's methodology, scope, and transparency in the sidebar."""
     st.sidebar.markdown("---")
     st.sidebar.header("About O'QT Assistant")
 
-    with st.sidebar.expander("Licensing and Costs (Reviewer #1)"):
+    with st.sidebar.expander("Licensing and Costs"):
         st.markdown("""
         **O'QT Assistant is Open Source and Free.**
 
@@ -656,24 +864,26 @@ def render_methodology_and_transparency():
         **Costs:** While the tool itself is free, using Large Language Models (LLMs) like GPT-4o incurs costs based on API usage. You must provide your own API key (OpenAI or OpenRouter), and you are responsible for the associated charges. We provide cost estimates in the configuration section. Free models are available via OpenRouter.
         """)
 
-    with st.sidebar.expander("Methodology and Scope (Reviewer #1 & #3)"):
+    with st.sidebar.expander("Methodology and Scope"):
         st.markdown("""
-        **Methodology:** O'QT employs a multi-agent LLM framework to automate the analysis of data retrieved directly from the OECD QSAR Toolbox API. This now includes metabolism simulation (Addressing Reviewer #2).
+        **Methodology:** O'QT employs a multi-agent LLM framework to automate the analysis of data retrieved directly from the OECD QSAR Toolbox API. This includes metabolism simulation.
 
         **Scope and Rationale for Exclusions:**
-        The current version focuses on core hazard assessment endpoints readily available via the QSAR Toolbox API. We have excluded:
-        - **Toxicokinetics/ADME models:** While basic metabolism is included, complex TK/ADME simulations require parameters not fully exposed or easily automated via the current API, often leading to timeouts.
-        - **Complex Mammalian Toxicity Endpoints (e.g., LD50/LC50):** Comprehensive assessment often requires integrating diverse data types and complex QSAR models which are better handled within the desktop application's dedicated workflows.
+        The current version focuses on core hazard assessment endpoints readily available via the QSAR Toolbox API. 
+        In the Guided Workflow, users can now choose to exclude:
+        - **Toxicokinetics/ADME models:** To focus the analysis away from complex TK/ADME simulations.
+        - **Complex Mammalian Toxicity Endpoints:** To focus the analysis on environmental or specific mechanistic endpoints.
 
         **Data Extraction:** The agents extract available experimental data points retrieved from the Toolbox, including physicochemical parameters, toxicity endpoints, environmental fate parameters, etc., focusing specifically on records marked as "Measured value". Metadata associated with these studies is now also retrieved.
         """)
 
-    with st.sidebar.expander("Transparency and Reliability (Reviewer #3)"):
+    with st.sidebar.expander("Transparency and Reliability"):
         st.markdown("""
         **LLM Reliability:** We acknowledge the risk of LLMs generating incorrect information (hallucinations). We mitigate this by:
         1. **Strict Prompts:** Agents are instructed to ONLY use data provided by the QSAR Toolbox API.
         2. **Data Provenance:** The synthesized report strictly distinguishes between "Experimental (Toolbox)" and "QSAR Estimate (Toolbox)" data.
         3. **Separation of Data:** Raw data retrieved from the Toolbox is displayed separately from the LLM-generated analysis.
+        4. **Configuration Control:** Users can adjust LLM parameters (Temperature/Tokens) in the Guided Workflow.
 
         **Profiler Selection:** The QSAR Toolbox includes numerous profilers. To ensure performance via the API, O'QT automatically selects a subset of fast-responding and broadly relevant profilers (e.g., DNA/Protein binding, functional groups). This selection is predetermined by the tool based on performance testing.
 
@@ -681,22 +891,330 @@ def render_methodology_and_transparency():
         """)
 
 
-# Make main async
-async def main():
-    st.set_page_config(
-        page_title="O'QT Assistant",
-        page_icon="logo.png",
-        layout="wide"
-    )
+# ... (Keep existing functions: execute_analysis_async, execute_analysis, render_standard_mode, main) ...
+# NEW: Centralized analysis execution function (Async Core Logic)
+async def execute_analysis_async(identifier: str, search_type: str, context: str, simulator_guids: List[str], llm_config: Dict[str, Any], qsar_config: Dict[str, Any], scope_config: Dict[str, Any] = None):
+    """
+    Executes the chemical analysis pipeline asynchronously: data retrieval, agent analysis, and report synthesis.
+    Stores results in st.session_state.
+    """
+    # Create inputs dict for logging purposes
+    inputs = {
+        "identifier": identifier,
+        "search_type": search_type,
+        "context": context,
+        "simulator_guids": simulator_guids,
+        "scope_config": scope_config if scope_config else "Default (All)",
+        "details": {}
+    }
 
-    initialize_session_state()
+    # Reset state for new analysis
+    st.session_state.analysis_results = None
+    st.session_state.final_report = None
+    st.session_state.specialist_outputs_dict = None
+    st.session_state.comprehensive_log = None
+    st.session_state.error = None
+    st.session_state.retry_count = 0
+    if 'exp_data_page' in st.session_state:
+        st.session_state.exp_data_page = 1
 
-    # Display the logo at the top of the sidebar
-    if os.path.exists("logo.png"):
-        st.sidebar.image("logo.png", use_container_width=True)
+    # Create progress bar placeholder here
+    # Use update_progress to handle creation/reset safely
+    update_progress(0.0, "Status: Starting analysis...")
 
-    # --- Sidebar Configuration and Information ---
-    render_configuration_ui()
+
+    # Prepare LLM configuration
+    current_llm_config = llm_config.copy()
+    
+    # Map display model name to model ID if needed (handles both standard and wizard configs)
+    if 'model_id' not in current_llm_config or not current_llm_config.get('model_id'):
+        model_display_name = current_llm_config.get('model_name')
+        provider = current_llm_config.get('provider')
+
+        if not provider or not model_display_name:
+            st.error("LLM configuration is incomplete (missing provider or model name).")
+            return
+        try:
+            model_id = LLM_MODELS[provider][model_display_name]['id']
+            current_llm_config['model_id'] = model_id
+        except KeyError:
+            st.error(f"Error: Could not find Model ID for {model_display_name} under {provider}.")
+            return
+
+    # Apply LLM overrides if present (from Guided Wizard, passed via llm_config) (NEW)
+    if current_llm_config.get("temperature_override") is not None:
+        # Note: The actual override happens in initialize_llm in llm_utils.py.
+        # We just log that an override was requested here.
+        inputs["llm_temperature_override"] = current_llm_config["temperature_override"]
+    
+    if current_llm_config.get("max_tokens_override") is not None:
+        inputs["llm_max_tokens_override"] = current_llm_config["max_tokens_override"]
+
+
+    try:
+        # --- Step 1: Sequential Data Fetching ---
+        # perform_chemical_analysis is sync.
+        # It now uses process_properties and format_chemical_data internally.
+        results = perform_chemical_analysis(identifier, search_type, context, simulator_guids, qsar_config, scope_config)
+
+        if results:
+            # Note: At this point, st.session_state.analysis_results contains the RAW data before processing/filtering.
+            # We no longer store a copy of raw results here, as processing happens progressively.
+
+            # --- Step 1.5: Data Processing and Filtering (NEW) ---
+            update_progress(0.81, "⚙️ Processing and filtering data...")
+
+            # Process metadata (Properties and Basic Info are already processed in perform_chemical_analysis)
+            processed_experimental_data = process_experimental_metadata(results.get('experimental_data', []))
+            
+            # Apply filters based on scope_config
+            if scope_config:
+                exclude_adme_tk = scope_config.get("exclude_adme_tk", False)
+                exclude_mammalian_tox = scope_config.get("exclude_mammalian_tox", False)
+                
+                if exclude_adme_tk or exclude_mammalian_tox:
+                    filtered_data, drop_counts = filter_experimental_records(
+                        processed_experimental_data,
+                        exclude_adme_tk=exclude_adme_tk,
+                        exclude_mammalian_tox=exclude_mammalian_tox
+                    )
+                    
+                    # Update the 'results' dictionary (used by agents) with filtered data
+                    results['experimental_data'] = filtered_data
+                    
+                    # Add filtering information to the log inputs
+                    inputs['filtering_info'] = {
+                        "note": f"Applied filters. Dropped Mammalian Tox: {drop_counts['dropped_mammalian']}, Dropped ADME/TK: {drop_counts['dropped_adme_tk']}",
+                        "drop_counts": drop_counts
+                    }
+                    logger.info(f"Applied data filters: {drop_counts}")
+                else:
+                    results['experimental_data'] = processed_experimental_data
+            else:
+                results['experimental_data'] = processed_experimental_data
+
+            # Note: The 'results' object now contains processed and potentially filtered experimental data for the agents.
+            # The UI display (render_results_section) should use this processed/filtered data as well for consistency.
+            # We update the session state results to reflect the processed data used in analysis.
+            st.session_state.analysis_results = results
+
+
+            # --- Step 2: Chemical Context Agent ---
+            update_progress(0.82, "🆔 Confirming Chemical Identity...")
+            original_context = context if context else "General chemical hazard assessment"
+            chemical_data_for_context = results.get('chemical_data', {})
+            
+            # Use await directly as we are in an async function
+            confirmed_identity_str = await analyze_chemical_context(chemical_data_for_context, original_context, current_llm_config)
+            
+            # Prepend identity to context for other agents
+            analysis_context = f"{confirmed_identity_str}\n\nUser Goal: {original_context}"
+            
+            # Add scope/filter details to context if available (for transparency in LLM analysis)
+            if scope_config:
+                analysis_context += f"\n\nAnalysis Scope Configuration:\n{json.dumps(scope_config, indent=2)}"
+            if 'filtering_info' in inputs:
+                 analysis_context += f"\n\nData Filtering Note:\n{inputs['filtering_info']['note']}"
+
+            st.session_state.specialist_outputs_dict = {"Chemical_Context": confirmed_identity_str} # Store context output
+
+            # --- Step 3: Parallel Specialist Agent Analysis ---
+            update_progress(0.85, "🧠 Running core specialist agents...")
+
+            # Prepare data slices for agents
+            properties_data = results.get('chemical_data', {}).get('properties', {})
+            profiling_data = results.get('profiling', {})
+            metabolism_data = results.get('metabolism', {})
+
+            # **Handle experimental data truncation for LLM agents**
+            
+            # Use the processed/filtered experimental data (already processed in Step 1.5)
+            experimental_data_list = results.get('experimental_data', [])
+
+            # (Truncation logic remains the same)
+            experimental_data_for_llm_processing = experimental_data_list
+            truncation_active_for_llm = False
+            truncation_note_for_llm = {}
+
+            if len(experimental_data_list) > MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA:
+                experimental_data_for_llm_processing = experimental_data_list[:MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA]
+                truncation_active_for_llm = True
+
+                truncation_note_content = (
+                    f"Note: The original {len(experimental_data_list)} experimental data records "
+                    f"have been automatically truncated to the first {MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA} records for this LLM-based analysis "
+                    f"due to processing volume limits. The agent should summarize these initial records. "
+                    f"The complete dataset remains available in the application's UI tables and for download."
+                )
+                # This dictionary structure should be compatible with typical experimental data items.
+                truncation_note_for_llm = {
+                    "Endpoint": "System Information",
+                    "Value": truncation_note_content,
+                    "Unit": "LLM Processing Note",
+                    "Reference": "QSAR Assistant System Notification",
+                    "DataType": "SystemNote", # Adding a type hint
+                    # Include other common fields if your experimental data items usually have them, e.g., with "N/A"
+                    "TestGuid": "N/A",
+                    "Reliability": "N/A",
+                    "Parsed_Metadata": {} # Ensure structured metadata field exists
+                }
+                # Prepend the note so the LLM encounters it first.
+                experimental_data_for_llm_processing = [truncation_note_for_llm] + experimental_data_for_llm_processing
+
+
+            # Wrap experimental data list in a dict for consistent agent input type
+            experimental_data_dict_for_llm = {"experimental_results": experimental_data_for_llm_processing}
+            if truncation_active_for_llm:
+                experimental_data_dict_for_llm["note_to_agent"] = \
+                    f"The 'experimental_results' list provided has been truncated to the first {MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA} records (plus a system note about this truncation) to manage data volume. Please base your analysis on this subset."
+
+
+            # Create tasks for specialist agents
+            task_phys = asyncio.create_task(analyze_physical_properties(properties_data, analysis_context, current_llm_config))
+            task_env = asyncio.create_task(analyze_environmental_fate(properties_data, analysis_context, current_llm_config))
+            task_prof = asyncio.create_task(analyze_profiling_reactivity(profiling_data, analysis_context, current_llm_config))
+            task_exp = asyncio.create_task(analyze_experimental_data(experimental_data_dict_for_llm, analysis_context, current_llm_config))
+            task_meta = asyncio.create_task(analyze_metabolism(metabolism_data, analysis_context, current_llm_config))
+
+            # Run core tasks concurrently - Use await asyncio.gather
+            core_specialist_outputs_list: List[str] = await asyncio.gather(
+                task_phys,
+                task_env,
+                task_prof,
+                task_exp,
+                task_meta
+            )
+
+            # Store core specialist outputs
+            st.session_state.specialist_outputs_dict.update({
+                "Physical_Properties": str(core_specialist_outputs_list[0]),
+                "Environmental_Fate": str(core_specialist_outputs_list[1]),
+                "Profiling_Reactivity": str(core_specialist_outputs_list[2]),
+                "Experimental_Data": str(core_specialist_outputs_list[3]),
+                "Metabolism": str(core_specialist_outputs_list[4])
+            })
+
+            # --- Step 4: Read Across Agent ---
+            update_progress(0.90, "🧬 Analyzing Read-Across Potential...")
+
+            # Prepare results for read_across agent
+            results_for_read_across_llm = results.copy()
+            # Use the truncated list for the LLM input
+            results_for_read_across_llm['experimental_data'] = experimental_data_for_llm_processing
+            
+            # Avoid placing None under this key (prevents NoneType.get crash in agent)
+            results_for_read_across_llm['scope_config'] = scope_config or {}
+
+            # Use await directly
+            read_across_report = await analyze_read_across(
+                results_for_read_across_llm,
+                core_specialist_outputs_list,
+                analysis_context,
+                current_llm_config
+            )
+            st.session_state.specialist_outputs_dict["Read_Across"] = read_across_report
+
+
+            # --- Step 5: Synthesize Final Report ---
+            update_progress(0.95, "✍️ Synthesizing final report...")
+            # Use await directly
+            final_report_content = await synthesize_report(
+                chemical_identifier=identifier,
+                specialist_outputs=core_specialist_outputs_list,
+                read_across_report=read_across_report,
+                context=original_context,
+                llm_config=current_llm_config
+            )
+            st.session_state.final_report = final_report_content
+
+            # --- Step 6: Generate Comprehensive Log ---
+            st.session_state.comprehensive_log = generate_comprehensive_log(
+                inputs,
+                current_llm_config, qsar_config,
+                results, st.session_state.specialist_outputs_dict, final_report_content
+            )
+
+            update_progress(1.0, "✅ Analysis complete!")
+
+        else:
+            # Handle case where perform_chemical_analysis returned None
+            st.error("Analysis could not start due to data retrieval issues (e.g., connection error or chemical not found). Check configuration and inputs.")
+            if 'progress_bar' in st.session_state:
+                try:
+                        st.session_state.progress_bar.empty()
+                except Exception:
+                        pass
+                if 'progress_bar' in st.session_state:
+                    try:
+                        del st.session_state.progress_bar
+                    except KeyError:
+                        pass
+
+
+    except (QSARConnectionError, QSARTimeoutError, QSARResponseError) as qsar_err:
+        st.error(f"🚫 QSAR API Error: {str(qsar_err)}")
+        if 'progress_bar' in st.session_state:
+            try:
+                st.session_state.progress_bar.empty()
+            except Exception:
+                pass
+            if 'progress_bar' in st.session_state:
+                try:
+                    del st.session_state.progress_bar
+                except KeyError:
+                    pass
+    except Exception as e:
+        st.error(f"❌ Analysis failed unexpectedly: {str(e)}")
+        logger.error(f"Analysis failed unexpectedly: {e}")
+        # Check if the error relates to LLM configuration (e.g., invalid API key)
+        if "AuthenticationError" in str(e) or "API key" in str(e) or "invalid_api_key" in str(e):
+                st.error("⚠️ LLM Authentication failed. Please check your API key and provider configuration in the sidebar.")
+        if st.session_state.error: # Check if detailed error was set
+            st.error(f"Detailed error: {st.session_state.error}")
+        if 'progress_bar' in st.session_state:
+            try:
+                st.session_state.progress_bar.empty()
+            except Exception:
+                pass
+            if 'progress_bar' in st.session_state:
+                try:
+                    del st.session_state.progress_bar
+                except KeyError:
+                    pass
+
+# NEW: Synchronous wrapper for execute_analysis_async
+def execute_analysis(identifier: str, search_type: str, context: str, simulator_guids: List[str], llm_config: Dict[str, Any], qsar_config: Dict[str, Any], scope_config: Dict[str, Any] = None):
+    """
+    Synchronous wrapper to run the asynchronous analysis pipeline.
+    Handles asyncio event loop management safely within Streamlit.
+    """
+    try:
+        # Attempt to get the running event loop (Streamlit manages one)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # If no loop is running, create and set a new one (e.g., first run)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Run the async function until completion
+        loop.run_until_complete(execute_analysis_async(
+            identifier, search_type, context, simulator_guids, llm_config, qsar_config, scope_config
+        ))
+
+    except Exception as e:
+        # Catch any unexpected errors during the execution wrapper logic
+        # Check if streamlit context is available before using st.error
+        try:
+            st.error(f"An error occurred during analysis execution wrapper: {e}")
+        except st.errors.StreamlitAPIException:
+            print(f"An error occurred during analysis execution wrapper (no Streamlit context): {e}")
+        logger.error(f"Error in execute_analysis wrapper: {e}")
+
+
+# UPDATED: render_standard_mode is synchronous
+def render_standard_mode():
+    """Render the standard O'QT assistant interface"""
     
     # Determine identifier for download filenames if results exist
     if st.session_state.analysis_results:
@@ -708,7 +1226,6 @@ async def main():
         render_specialist_downloads(identifier_display)
         
     render_methodology_and_transparency()
-
 
     # --- Header ---
     st.title("🧪 O'QT: The Open QSAR Toolbox AI Assistant") # Updated Title
@@ -753,6 +1270,26 @@ async def main():
         st.warning("Connect to QSAR Toolbox (see sidebar) to enable metabolism simulation selection.")
         st.session_state.selected_simulator_guids = []
 
+    # NEW: Profiler selection (Optional)
+    st.subheader("4. Profiler Selection (Optional)")
+    if st.session_state.connection_status:
+        profs = st.session_state.get('available_profilers', [])
+        if profs:
+            prof_options = { (p.get('Caption') or p.get('Name') or p.get('Guid')): p.get('Guid')
+                             for p in profs if isinstance(p, dict) and p.get('Guid') }
+            current_prof = [cap for cap, gid in prof_options.items()
+                            if gid in (st.session_state.get('selected_profiler_guids') or [])]
+            selected_prof_caps = st.multiselect(
+                "Select profilers to run (leave empty to use the balanced default set)",
+                options=list(prof_options.keys()),
+                default=current_prof,
+                help="Pick specific profilers to execute; empty = run the pre-optimized fast subset (~13)."
+            )
+            st.session_state.selected_profiler_guids = [prof_options[c] for c in selected_prof_caps]
+        else:
+            st.info("Profiler catalog not available from the API.")
+    else:
+        st.warning("Connect to QSAR Toolbox to enable profiler selection.")
 
     # Analyze Button placed prominently after inputs
     analyze_button_clicked = st.button("🚀 Analyze Chemical", type="primary", use_container_width=True)
@@ -761,14 +1298,6 @@ async def main():
     st.session_state.input_identifier = identifier
     st.session_state.input_search_type = search_type
     st.session_state.input_context = context
-    # Create inputs dict for logging purposes
-    inputs = {
-        "identifier": identifier,
-        "search_type": search_type, 
-        "context": context,
-        "simulator_guids": st.session_state.selected_simulator_guids, # Add simulator selection list to inputs
-        "details": {}
-    }
 
     # --- Analysis Workflow ---
     # Check configuration status before analyzing
@@ -795,211 +1324,22 @@ async def main():
         elif st.session_state.connection_status is False:
              st.error("Cannot connect to QSAR Toolbox API. Please check the configuration and ensure the Toolbox is running.")
         else:
-            # Reset state for new analysis
-            st.session_state.analysis_results = None
-            st.session_state.final_report = None
-            st.session_state.specialist_outputs_dict = None
-            st.session_state.comprehensive_log = None # Reset log
-            st.session_state.error = None
-            st.session_state.retry_count = 0
-            if 'exp_data_page' in st.session_state:
-                st.session_state.exp_data_page = 1  # Reset to page 1 for new data
-            # Create progress bar placeholder here
-            st.session_state.progress_bar = st.progress(0.0, text="Status: Starting analysis...")
-
-            # Get the configuration required for the agents (FIXED: Retrieve config here)
-            current_llm_config = st.session_state.llm_config.copy()
-            
-            # Map the display model name to the actual model ID required by the API
-            model_display_name = current_llm_config['model_name']
-            provider = current_llm_config['provider']
-            try:
-                model_id = LLM_MODELS[provider][model_display_name]['id']
-                current_llm_config['model_id'] = model_id
-            except KeyError:
-                st.error(f"Error: Could not find Model ID for {model_display_name} under {provider}.")
-                return
-
-            try:
-                # --- Step 1: Sequential Data Fetching ---
-                # Pass the selected simulator GUIDs list
-                results = perform_chemical_analysis(identifier, search_type, context, st.session_state.selected_simulator_guids)
-
-                if results:
-                    st.session_state.analysis_results = results # Store raw results (contains full experimental data)
-
-                    # --- Step 2: Chemical Context Agent ---
-                    update_progress(0.82, "🆔 Confirming Chemical Identity...")
-                    original_context = context if context else "General chemical hazard assessment"
-                    chemical_data_for_context = results.get('chemical_data', {})
-                    # FIXED: Pass llm_config
-                    confirmed_identity_str = await analyze_chemical_context(chemical_data_for_context, original_context, current_llm_config)
-                    # Prepend identity to context for other agents
-                    analysis_context = f"{confirmed_identity_str}\n\nUser Goal: {original_context}"
-                    st.session_state.specialist_outputs_dict = {"Chemical_Context": confirmed_identity_str} # Store context output
-
-                    # --- Step 3: Parallel Specialist Agent Analysis ---
-                    update_progress(0.85, "🧠 Running core specialist agents...")
-
-                    # Prepare data slices for agents
-                    properties_data = results.get('chemical_data', {}).get('properties', {}) # Already fetched
-                    profiling_data = results.get('profiling', {})
-                    metabolism_data = results.get('metabolism', {}) # NEW: Get structured metabolism data
-
-                    # **Handle experimental data truncation for LLM agents**
-                    
-                    # We need to import the processing function here to prepare data for the LLM if we want the LLM to see the metadata.
-                    # FIX: Updated import name from flatten_experimental_metadata to process_experimental_metadata
-                    from oqt_assistant.utils.data_formatter import process_experimental_metadata
-                    
-                    # Apply processing to the raw experimental data BEFORE truncation for the LLM
-                    # FIX: Updated function call name
-                    original_experimental_data_list = process_experimental_metadata(results.get('experimental_data', []))
-
-                    experimental_data_for_llm_processing = original_experimental_data_list
-                    truncation_active_for_llm = False
-                    truncation_note_for_llm = {}
-
-                    if len(original_experimental_data_list) > MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA:
-                        experimental_data_for_llm_processing = original_experimental_data_list[:MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA]
-                        truncation_active_for_llm = True
-
-                        truncation_note_content = (
-                            f"Note: The original {len(original_experimental_data_list)} experimental data records "
-                            f"have been automatically truncated to the first {MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA} records for this LLM-based analysis "
-                            f"due to processing volume limits. The agent should summarize these initial records. "
-                            f"The complete dataset remains available in the application's UI tables and for download."
-                        )
-                        # This dictionary structure should be compatible with typical experimental data items.
-                        truncation_note_for_llm = {
-                            "Endpoint": "System Information",
-                            "Value": truncation_note_content,
-                            "Unit": "LLM Processing Note",
-                            "Reference": "QSAR Assistant System Notification",
-                            "DataType": "SystemNote", # Adding a type hint
-                            # Include other common fields if your experimental data items usually have them, e.g., with "N/A"
-                            "TestGuid": "N/A",
-                            "Reliability": "N/A",
-                            "Parsed_Metadata": {} # Ensure structured metadata field exists
-                        }
-                        # Prepend the note so the LLM encounters it first.
-                        experimental_data_for_llm_processing = [truncation_note_for_llm] + experimental_data_for_llm_processing
-
-                    # Wrap experimental data list in a dict for consistent agent input type
-                    experimental_data_dict_for_llm = {"experimental_results": experimental_data_for_llm_processing}
-                    if truncation_active_for_llm:
-                        experimental_data_dict_for_llm["note_to_agent"] = \
-                            f"The 'experimental_results' list provided has been truncated to the first {MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA} records (plus a system note about this truncation) to manage data volume. Please base your analysis on this subset."
-
-
-                    # Create tasks for specialist agents, passing specific data slices
-                    # FIXED: Pass llm_config to all agents
-                    task_phys = asyncio.create_task(analyze_physical_properties(properties_data, analysis_context, current_llm_config))
-                    # Environmental fate often uses properties like LogKow, Solubility, Vapor Pressure
-                    task_env = asyncio.create_task(analyze_environmental_fate(properties_data, analysis_context, current_llm_config))
-                    task_prof = asyncio.create_task(analyze_profiling_reactivity(profiling_data, analysis_context, current_llm_config))
-                    # Pass the potentially truncated and noted data (now processed) to analyze_experimental_data
-                    task_exp = asyncio.create_task(analyze_experimental_data(experimental_data_dict_for_llm, analysis_context, current_llm_config))
-                    # NEW TASK: Metabolism (passing the structured multi-simulation metabolism dictionary)
-                    task_meta = asyncio.create_task(analyze_metabolism(metabolism_data, analysis_context, current_llm_config))
-
-                    # Run core tasks concurrently - outputs should now be strings
-                    core_specialist_outputs_list: List[str] = await asyncio.gather(
-                        task_phys,
-                        task_env,
-                        task_prof,
-                        task_exp,
-                        task_meta # NEW TASK
-                    )
-
-                    # Store core specialist outputs
-                    st.session_state.specialist_outputs_dict.update({
-                        "Physical_Properties": str(core_specialist_outputs_list[0]),
-                        "Environmental_Fate": str(core_specialist_outputs_list[1]),
-                        "Profiling_Reactivity": str(core_specialist_outputs_list[2]),
-                        "Experimental_Data": str(core_specialist_outputs_list[3]),
-                        "Metabolism": str(core_specialist_outputs_list[4]) # NEW OUTPUT
-                    })
-
-                    # --- Step 4: Read Across Agent ---
-                    update_progress(0.90, "🧬 Analyzing Read-Across Potential...")
-
-                    # Prepare results for read_across agent, ensuring experimental data is truncated if needed for its LLM call
-                    results_for_read_across_llm = results.copy() # Start with a copy of the full results
-                    
-                    # Replace 'experimental_data' in this copied dict with the processed/truncated list + note
-                    # `experimental_data_for_llm_processing` already contains this (processed in Step 3)
-                    results_for_read_across_llm['experimental_data'] = experimental_data_for_llm_processing
-
-
-                    # Pass full results (with potentially truncated experimental_data for LLM), the core outputs (now including metabolism), and the enhanced context
-                    # FIXED: Pass llm_config
-                    read_across_report = await analyze_read_across(
-                        results_for_read_across_llm,
-                        core_specialist_outputs_list,
-                        analysis_context,
-                        current_llm_config
-                    )
-                    st.session_state.specialist_outputs_dict["Read_Across"] = read_across_report # Store read-across output
-
-
-                    # --- Step 5: Synthesize Final Report ---
-                    update_progress(0.95, "✍️ Synthesizing final report...")
-                    # Pass the actual identifier, the core specialist outputs (now 5), the read-across report, and the original context
-                    # FIXED: Pass llm_config
-                    final_report_content = await synthesize_report(
-                        chemical_identifier=identifier,
-                        specialist_outputs=core_specialist_outputs_list, # Only the core 5
-                        read_across_report=read_across_report,
-                        context=original_context, # Use the original user context for the synthesizer's goal
-                        llm_config=current_llm_config
-                    )
-                    st.session_state.final_report = final_report_content
-
-                    # --- Step 6: Generate Comprehensive Log ---
-                    st.session_state.comprehensive_log = generate_comprehensive_log(
-                        inputs,
-                        current_llm_config, st.session_state.qsar_config,
-                        results, st.session_state.specialist_outputs_dict, final_report_content
-                    )
-
-                    update_progress(1.0, "✅ Analysis complete!")
-
-                else:
-                    # Handle case where perform_chemical_analysis returned None (e.g., connection error handled there)
-                    st.error("Analysis could not start due to data retrieval issues (e.g., connection error or chemical not found). Check configuration and inputs.")
-                    if 'progress_bar' in st.session_state:
-                        try:
-                             st.session_state.progress_bar.empty()
-                        except Exception:
-                             pass
-                        if 'progress_bar' in st.session_state:
-                            del st.session_state.progress_bar
-
-
-            except (QSARConnectionError, QSARTimeoutError, QSARResponseError) as qsar_err:
-                st.error(f"🚫 QSAR API Error: {str(qsar_err)}")
-                if 'progress_bar' in st.session_state:
-                    try:
-                        st.session_state.progress_bar.empty()
-                    except Exception:
-                        pass
-                    if 'progress_bar' in st.session_state:
-                        del st.session_state.progress_bar
-            except Exception as e:
-                st.error(f"❌ Analysis failed unexpectedly: {str(e)}")
-                # Check if the error relates to LLM configuration (e.g., invalid API key)
-                if "AuthenticationError" in str(e) or "API key" in str(e) or "invalid_api_key" in str(e):
-                     st.error("⚠️ LLM Authentication failed. Please check your API key and provider configuration in the sidebar.")
-                if st.session_state.error: # Check if detailed error was set
-                    st.error(f"Detailed error: {st.session_state.error}")
-                if 'progress_bar' in st.session_state:
-                    try:
-                        st.session_state.progress_bar.empty()
-                    except Exception:
-                        pass
-                    if 'progress_bar' in st.session_state:
-                        del st.session_state.progress_bar
+            # Run the analysis using the synchronous wrapper
+            # Pass a minimal scope so profiling picks are respected even in Standard mode
+            execute_analysis(
+                identifier=identifier,
+                search_type=search_type,
+                context=context,
+                simulator_guids=st.session_state.selected_simulator_guids,
+                llm_config=st.session_state.llm_config,
+                qsar_config=st.session_state.qsar_config,
+                scope_config={
+                    "include_properties": True,
+                    "include_experimental": True,
+                    "include_profiling": True,
+                    "selected_profiler_guids": st.session_state.get('selected_profiler_guids', [])
+                }
+            )
 
     # Display results (if they exist, either from current run or previous session)
     if st.session_state.analysis_results is not None:
@@ -1011,19 +1351,61 @@ async def main():
         except (KeyError, TypeError):
             identifier_display = st.session_state.input_identifier or "Analysis"
 
-        # render_results_section uses st.session_state.analysis_results, which has FULL data
+        # render_results_section uses st.session_state.analysis_results, which now contains processed/filtered data
         render_results_section(st.session_state.analysis_results, identifier_display)
         render_reports_section(identifier_display) # Show potentially existing report
         render_download_section(st.session_state.analysis_results, identifier_display)
 
-# Run the async main function
+
+# UPDATED: main is synchronous
+def main():
+    st.set_page_config(
+        page_title="O'QT Assistant",
+        page_icon="logo.png",
+        layout="wide"
+    )
+
+    initialize_session_state()
+
+    # Display the logo at the top of the sidebar
+    if os.path.exists("logo.png"):
+        st.sidebar.image("logo.png", use_container_width=True)
+
+    # --- Sidebar Configuration and Information ---
+    render_configuration_ui()
+
+    # Mode selection
+    # Determine index based on whether a wizard session is active
+    if "wiz" in st.session_state:
+        default_index = 1
+    else:
+        default_index = 0
+
+    modes = ["Standard", "Guided Wizard (beta)"]
+    
+    # Use a key for the radio button to ensure state persistence
+    ui_mode = st.sidebar.radio("Mode", modes, index=default_index, key="ui_mode_selector")
+
+    if ui_mode == "Guided Wizard (beta)":
+        run_guided_wizard(
+            ping_qsar=_ping_qsar,
+            estimate_llm_cost=_estimate_cost,
+            on_run_pipeline=_on_run_pipeline,
+            get_llm_models=_get_llm_models,
+        )
+        # If we are in wizard mode, we stop rendering the rest of the app.
+        st.stop()
+    else:
+        # If switching back from wizard (ui_mode is Standard), clear the wizard state if it exists
+        if "wiz" in st.session_state:
+            del st.session_state["wiz"]
+            # Force a rerun to cleanly reload the standard interface
+            st.rerun()
+
+        render_standard_mode()
+
+# Run the synchronous main function
 if __name__ == "__main__":
-    # Ensure asyncio event loop compatibility with Streamlit if needed
-    try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "Event loop is closed" in str(e):
-            # This can happen in some Streamlit environments; typically harmless on shutdown
-            pass
-        else:
-            raise
+    # Initialize logging configuration at startup
+    logging.basicConfig(level=logging.INFO)
+    main()

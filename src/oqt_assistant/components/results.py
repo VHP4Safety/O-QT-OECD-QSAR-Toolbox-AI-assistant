@@ -1,670 +1,391 @@
+# oqt_assistant/components/results.py
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache 2.0
 
 import streamlit as st
 import pandas as pd
-import math
-import json
-import logging # Added logging
 from typing import Dict, Any, List
-from ..utils.data_formatter import clean_response_data
+import json
+import io
+import logging
 
-logger = logging.getLogger(__name__) # Initialize logger
+logger = logging.getLogger(__name__)
 
-def display_profilers_list(available_profilers):
-    # ... (This function remains the same)
-    """Helper method to display a list of profilers"""
-    profilers_list = []
-    
-    if isinstance(available_profilers, list):
-        # If it's already a list (standardized format), use it directly
-        for profiler in available_profilers:
-            profilers_list.append({
-                "Profiler Name": profiler.get('name', 'Unknown'),
-                "Type": profiler.get('type', 'Unknown'),
-                "Status": profiler.get('status', 'Unknown'),
-                # Description might not be in the standardized list, add a default if needed
-                "Description": profiler.get('description', 'A chemical profiler that categorizes chemicals based on structural features')
-            })
-    elif isinstance(available_profilers, dict):
-        # If it's a dict (legacy format), convert to list
-        for key, profiler in available_profilers.items():
-            profilers_list.append({
-                "Profiler Name": profiler.get('name', key),
-                "Type": profiler.get('type', 'Unknown'),
-                "Status": profiler.get('status', 'Unknown'),
-                "Description": profiler.get('description', 'A chemical profiler that categorizes chemicals based on structural features')
-            })
-    
-    if profilers_list:
-        profilers_df = pd.DataFrame(profilers_list)
-        st.dataframe(profilers_df, use_container_width=True)
-        return profilers_list
-    else:
-        st.info("No profiler information available")
-        return []
+# Assuming safe_json is available if needed for downloads
+try:
+    from oqt_assistant.utils.data_formatter import safe_json
+except ImportError:
+    # Fallback if import fails
+    def safe_json(data):
+        return json.dumps(data, indent=2, default=str)
 
+def render_results_section(results: Dict[str, Any], identifier: str):
+    """Render the results section with tabs for different data types."""
+    st.header(f"Analysis Results for: {identifier}")
 
-# UPDATED FUNCTION (Case-insensitive column exclusion)
-def render_results_section(results: Dict[str, Any], identifier_display: str):
-    """Render the analysis results in an interactive dashboard"""
-    st.header(f"Analysis Results for {identifier_display}")
-    
-    # Clean and format the data (this now includes structured metadata parsing)
-    cleaned_results = clean_response_data(results)
-    
-    # Context-specific analysis
-    if results.get('context'):
-        with st.expander("View Analysis Context"):
-            st.info(f"{results['context']}")
-    
-    # Tabs for different result categories
-    tabs = st.tabs([
-        "Chemical Overview",
-        "Properties",
-        "Experimental Data",
-        "Profiling",
-        "Metabolism"
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🧪 Chemical Data",
+        "📊 Properties (Calculated)",
+        "📈 Experimental Data (Measured)",
+        "🔬 Profiling & Reactivity",
+        "🧬 Metabolism (Simulated)"
     ])
-    
-    with tabs[0]:
-        st.subheader("Chemical Information")
-        if cleaned_results["chemical_data"]:
-            chemical_info = pd.DataFrame([cleaned_results["chemical_data"]]).transpose()
-            chemical_info.columns = ["Value"]
-            st.dataframe(chemical_info, use_container_width=True)
-        else:
-            st.info("No chemical information available")
-    
-    with tabs[1]:
-        st.subheader("Chemical Properties")
-        if cleaned_results["properties"]:
-            # Convert properties to DataFrame
-            properties_list = []
-            for name, data in cleaned_results["properties"].items():
-                 # Ensure data is a dictionary before accessing keys
-                if isinstance(data, dict):
-                    properties_list.append({
-                        "Property": name,
-                        "Value": data.get("value"),
-                        "Unit": data.get("unit"),
-                        "Type": data.get("type"),
-                        "Category": data.get("family")
-                    })
-                else:
-                     # Handle cases where the value is not a dict (e.g., direct value from older API versions)
-                     properties_list.append({
-                        "Property": name,
-                        "Value": data,
-                        "Unit": "N/A",
-                        "Type": "Unknown",
-                        "Category": "Unknown"
-                    })
-            props_df = pd.DataFrame(properties_list)
-            st.dataframe(props_df, use_container_width=True)
-        else:
-            st.info("No property data available")
 
-    # UPDATED TAB 2: Experimental Data with interactive metadata viewer
-    with tabs[2]:
-        st.subheader("Experimental Data and Metadata")
+    # --- Tab 1: Chemical Data ---
+    with tab1:
+        _render_chemical_info(results.get('chemical_data', {}))
 
-        with st.expander("About the Data Extracted (Reviewer #1)"):
-            st.markdown("""
-            This table displays the raw experimental data retrieved from the OECD QSAR Toolbox. 
-            **Select a row in the table below to view detailed study metadata.**
+    # --- Tab 2: Properties (Calculated) ---
+    with tab2:
+        _render_properties(results.get('chemical_data', {}).get('properties', {}))
 
-            **Data Schema:**
-            - **Endpoint, Value, Unit, DataType, Reliability, Reference/TestGuid:** Standard fields.
-            - **Metadata:** Detailed study conditions (e.g., Author, Year, Test Organism) are parsed and available upon row selection.
+    # --- Tab 3: Experimental Data (Measured) ---
+    with tab3:
+        # Data is already processed (metadata parsed, year extracted) in app.py
+        _render_experimental_data_interactive(results.get('experimental_data', []))
 
-            **AI Analysis Focus:** The AI agents utilize this metadata for context. Data labeled "Measured value." is strictly reported as **"Experimental (Toolbox)"** in the synthesized report.
-            """)
+    # --- Tab 4: Profiling & Reactivity ---
+    with tab4:
+        _render_profiling_data(results.get('profiling', {}))
 
-        # Data is already processed by clean_response_data
-        if cleaned_results["experimental_data"]:
-            exp_df = pd.DataFrame(cleaned_results["experimental_data"])
-            
-            # Prepare DataFrame for display
-            if not exp_df.empty:
-                # Define columns to display in the main table.
-                # IMPROVEMENT: Case-insensitive exclusion to handle 'Metadata', 'metadata', etc.
-                # This ensures that even if the backend processing somehow missed a variant, the frontend filters it.
-                columns_to_exclude = {'parsed_metadata', 'metadata', 'processing_error'}
-                columns_to_display = [col for col in exp_df.columns if col.lower() not in columns_to_exclude]
-                
-                # Check if we have columns left to display
-                if not columns_to_display:
-                    # If all columns were excluded (e.g. only error messages), show relevant info
-                    st.warning("No standard data columns available to display. Showing error overview.")
-                    # Filter to show only error columns if they exist
-                    error_cols = [col for col in exp_df.columns if col.lower() in {'processing_error', 'raw_value'}]
-                    if error_cols:
-                         display_df = exp_df[error_cols].copy()
-                    else:
-                         display_df = pd.DataFrame() # Empty dataframe
-                else:
-                    display_df = exp_df[columns_to_display].copy()
-                
-                # Fix PyArrow serialization issues
-                if not display_df.empty:
-                    if 'Value' in display_df.columns:
-                        display_df['Value'] = display_df['Value'].astype(str)
-                    
-                    for col in display_df.columns:
-                        if display_df[col].dtype == 'object':
-                            # Handle potential lists within cells if any remain
-                            display_df[col] = display_df[col].apply(lambda x: ', '.join(x) if isinstance(x, list) else str(x))
+    # --- Tab 5: Metabolism (Simulated) ---
+    with tab5:
+        _render_metabolism_data(results.get('metabolism', {}))
 
-                # --- Interactive Table Display (using st.dataframe with selection) ---
 
-                try:
-                    st.info(f"Showing {len(display_df)} records. Select a row to view details.")
-                    
-                    # Using the modern approach for selection feedback (Streamlit >= 1.35 recommended)
-                    event = st.dataframe(
-                        display_df, 
-                        use_container_width=True,
-                        on_select="rerun", # Rerun the script when a row is selected
-                        selection_mode="single-row"
-                    )
-                    
-                    selected_rows_indices = event.selection.get("rows", [])
-
-                except Exception as e:
-                    # Fallback for older Streamlit versions or if selection fails
-                    st.warning(f"Interactive table selection not available or failed. Displaying static table. If you wish to use interactive features, please upgrade Streamlit (>= 1.35). Error: {e}")
-                    st.dataframe(display_df, use_container_width=True)
-                    selected_rows_indices = []
-
-                # --- Metadata Viewer ---
-                st.markdown("---")
-                st.subheader("Study Metadata Details")
-                
-                if selected_rows_indices:
-                    # Get the index of the selected row
-                    selected_index = selected_rows_indices[0]
-                    
-                    # Retrieve the corresponding record from the original (non-displayed) DataFrame
-                    # We use the index derived from the event on the display_df to access the full data in exp_df
-                    try:
-                        selected_record = exp_df.iloc[selected_index]
-                        
-                        # Extract the parsed metadata
-                        metadata = selected_record.get('Parsed_Metadata', {})
-                        
-                        if metadata:
-                            # Display metadata cleanly using a DataFrame
-                            try:
-                                meta_detail_df = pd.DataFrame(list(metadata.items()), columns=['Field', 'Value'])
-                                st.dataframe(meta_detail_df, use_container_width=True, hide_index=True)
-                            except Exception as e:
-                                st.error(f"Error displaying metadata details: {e}")
-                                st.json(metadata) # Fallback to JSON if DataFrame fails
-                        else:
-                            st.info("No structured metadata available for the selected record.")
-
-                    except IndexError:
-                        # Handle case where index might be out of bounds (e.g. if data changed rapidly)
-                        st.error("Error retrieving selected record. Please try selecting again.")
-
-                else:
-                    st.info("Select a row from the table above to view detailed study metadata.")
-
-            else:
-                st.info("No experimental data records found.")
-        else:
-            st.info("No experimental data available for this chemical")
-    
-    # Tabs 3 and 4 (Profiling and Metabolism) remain the same.
-    with tabs[3]:
-        st.subheader("Chemical Profiling")
+def _render_chemical_info(chemical_data: Dict[str, Any]):
+    """Render basic chemical information."""
+    st.subheader("Chemical Identification")
+    basic_info = chemical_data.get('basic_info', {})
+    if basic_info:
+        # Display key identifiers prominently
+        st.markdown(f"**Name:** {basic_info.get('Name', 'N/A')}")
+        st.markdown(f"**CAS:** {basic_info.get('Cas', 'N/A')}")
+        st.markdown(f"**SMILES:** `{basic_info.get('Smiles', 'N/A')}`")
+        st.markdown(f"**IUPAC Name:** {basic_info.get('IUPACName', 'N/A')}")
+        st.markdown(f"**ChemID (Toolbox Internal):** {basic_info.get('ChemId', 'N/A')}")
         
-        # Handle the profiling data structure from our updated API
-        if isinstance(cleaned_results["profiling"], dict):
-            # Show profiling status
-            status = cleaned_results["profiling"].get("status", "Unknown")
-            note = cleaned_results["profiling"].get("note", "")
-            
-            # Different display based on status
-            if status == "Success" or status == "Partial success":
-                st.success(f"Status: {status}")
-                if note:
-                    st.info(note)
-            elif status == "Limited":
-                st.warning(f"Status: {status}")
-                if note:
-                    st.info(note)
-            elif status == "Error":
-                st.error(f"Status: {status}")
-                if note:
-                    st.warning(note)
-            else:
-                 if note:
-                    st.info(note)
-            
-            # First check if we have actual profiling results
-            if 'results' in cleaned_results["profiling"] and cleaned_results["profiling"]["results"]:
-                # Create subtabs for profiling results and available profilers
-                profiling_tabs = st.tabs(["Profiling Results", "Available Profilers"])
-                
-                with profiling_tabs[0]:
-                    st.subheader("Profiling Results")
-                    
-                    results = cleaned_results["profiling"]["results"]
-                    
-                    # Handle different result structures
-                    if isinstance(results, list):
-                        # Handle results from profiling/all/{chemId} endpoint (if used)
-                        # ... (List handling logic omitted for brevity as the API uses the dict approach)
-                        st.warning("List format detected (unexpected).")
-                        st.json(results)
-                    
-                    elif isinstance(results, dict):
-                        # Handle results from individual profilers (e.g., the fast profilers approach)
+        with st.expander("View Full Identification JSON"):
+            st.json(basic_info)
+    else:
+        st.info("Chemical identification data not available.")
 
-                        # Convert to a standardized list format for easier display
-                        results_list = []
-                        for profiler_name, profiler_data in results.items():
-                            result_data = profiler_data.get('result', [])
-                            profiler_type = profiler_data.get('type', 'Unknown')
+def _render_properties(properties: Dict[str, Any] | List[Dict[str, Any]]):
+    """Render calculated properties."""
+    st.subheader("Physicochemical Properties (Calculated/QSAR)")
+    if not properties:
+        st.info("No calculated properties available.")
+        return
 
-                            if isinstance(result_data, list) and result_data:
-                                for category in result_data:
-                                    # Handle if category is a dict (sometimes API returns complex objects)
-                                    if isinstance(category, dict):
-                                         category_name = category.get("Name") or category.get("Category", str(category))
-                                    else:
-                                         category_name = str(category)
-
-                                    results_list.append({
-                                        "Profiler": profiler_name,
-                                        "Type": profiler_type,
-                                        "Category": category_name
-                                    })
-                            else:
-                                # No categories found or unexpected format
-                                results_list.append({
-                                    "Profiler": profiler_name,
-                                    "Type": profiler_type,
-                                    "Category": "No categories found or unexpected format"
-                                })
-                        
-                        if results_list:
-                            # Show as dataframe
-                            results_df = pd.DataFrame(results_list)
-                            st.dataframe(results_df, use_container_width=True)
-                        else:
-                            st.warning("No categories found in profiling results")
-
-                    else:
-                        # Unknown result structure
-                        st.json(results)
-                
-                with profiling_tabs[1]:
-                    st.subheader("Available Profilers")
-                    available_profilers = cleaned_results["profiling"].get("available_profilers", [])
-                    display_profilers_list(available_profilers)
-            
-            # If we only have available profilers (and no results)
-            elif 'available_profilers' in cleaned_results["profiling"]:
-                st.subheader("Available Profilers")
-                available_profilers = cleaned_results["profiling"]["available_profilers"]
-                display_profilers_list(available_profilers)
-
-                # Add explanation of what profilers do
-                st.markdown("""
-                ### What are chemical profilers?
-                
-                Chemical profilers are tools that analyze a chemical's structure to identify specific features or structural alerts 
-                that may be associated with particular toxicological effects or mechanisms of action. They help categorize chemicals 
-                and identify potential concerns based on structural similarity to known problematic chemicals.
-                """)
-
-            # Handle older structures if necessary (fallback)
-            elif 'results' in cleaned_results["profiling"] or 'profilers' in cleaned_results["profiling"]:
-                # ... (Legacy handling logic remains as a fallback if needed)
-                st.warning("Legacy profiling data structure detected.")
-                # st.json(cleaned_results["profiling"])
-        else:
-            st.info("No profiling data available")
-
-    # UPDATED TAB: Metabolism (Handles Multi-simulator display and robust data handling)
-    with tabs[4]: 
-        st.subheader("Metabolism Simulation Results")
-        metabolism_data = cleaned_results.get("metabolism", {})
-
-        if metabolism_data:
-            overall_status = metabolism_data.get("status", "Unknown")
-            overall_note = metabolism_data.get("note", "")
-            simulations = metabolism_data.get("simulations", {})
-
-            # Display overall status
-            if overall_status == "Success":
-                st.success(f"Overall Status: {overall_status}. {overall_note}")
-            elif overall_status == "Skipped":
-                st.info(f"Overall Status: {overall_status}. {overall_note}")
-            elif overall_status == "Partial Success":
-                st.warning(f"Overall Status: {overall_status}. {overall_note}")
-            elif overall_status == "Failed" or overall_status == "Error":
-                st.error(f"Overall Status: {overall_status}. {overall_note}")
-            
-            # Display results for each simulator
-            if simulations:
-                st.markdown("---")
-                st.subheader("Detailed Results per Simulator")
-                
-                # Use expanders for each simulator's results
-                for guid, simulation_result in simulations.items():
-                    sim_name = simulation_result.get("simulator_name", f"GUID: {guid}")
-                    sim_status = simulation_result.get("status", "Unknown")
-                    sim_note = simulation_result.get("note", "")
-                    metabolites = simulation_result.get("metabolites", [])
-
-                    # Determine the expander title color/icon based on status
-                    if sim_status == "Success":
-                        title = f"✅ {sim_name}"
-                    elif sim_status == "Failed" or sim_status == "Error":
-                        title = f"❌ {sim_name}"
-                    else:
-                        title = f"ℹ️ {sim_name}"
-
-                    with st.expander(title):
-                        st.info(f"Status: {sim_status}. Note: {sim_note}")
-                        
-                        if metabolites:
-                            try:
-                                # Convert to DataFrame for display
-                                # Use the robust conversion logic here as well (mirrors create_downloadable_data)
-                                processed_metabolites = []
-                                for metabolite in metabolites:
-                                    if isinstance(metabolite, dict):
-                                        processed_metabolites.append(metabolite)
-                                    elif isinstance(metabolite, str):
-                                        # Handle string format (e.g., SMILES) if API standardization missed it
-                                        processed_metabolites.append({"SMILES": metabolite, "Note": "Simple structure returned by API"})
-                                    else:
-                                        processed_metabolites.append({"Note": f"Unexpected data type: {type(metabolite)}", "RawValue": str(metabolite)})
-
-                                meta_df = pd.DataFrame(processed_metabolites)
-
-                                # Ensure consistent data types for PyArrow
-                                if not meta_df.empty:
-                                    for col in meta_df.columns:
-                                        if meta_df[col].dtype == 'object':
-                                            # Convert lists (like Names) to strings
-                                            meta_df[col] = meta_df[col].apply(lambda x: ', '.join(x) if isinstance(x, list) else str(x))
-
-                                st.dataframe(meta_df, use_container_width=True)
-                                
-                            except Exception as e:
-                                st.error(f"Error displaying metabolism data for {sim_name}: {e}")
-                                st.json(metabolites) # Fallback to JSON display
-        else:
-            st.info("No metabolism data available.")
-
-
-# create_downloadable_data and render_download_section remain the same.
-def create_downloadable_data(results: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-    """Create downloadable DataFrames from results"""
-    cleaned_results = clean_response_data(results)
-    downloads = {}
-    
-    # Properties (Remains the same)
-    if cleaned_results["properties"]:
-        properties_list = []
-        for name, data in cleaned_results["properties"].items():
-            if isinstance(data, dict):
-                properties_list.append({
-                    "Property": name,
-                    "Value": data.get("value"),
-                    "Unit": data.get("unit"),
-                    "Type": data.get("type"),
-                    "Category": data.get("family")
+    try:
+        # Shape 1: dict of {name -> {value, unit, type, family, calculator_name}}
+        if isinstance(properties, dict) and all(isinstance(v, dict) for v in properties.values()):
+            rows = []
+            for param, info in properties.items():
+                rows.append({
+                    "Parameter": param,
+                    "Value": info.get("value"),
+                    "Unit": info.get("unit"),
+                    "Type": info.get("type"),
+                    "Calculator": info.get("calculator_name"),
+                    "Family": info.get("family"),
                 })
-            else:
-                 properties_list.append({
-                        "Property": name,
-                        "Value": data,
-                        "Unit": "N/A",
-                        "Type": "Unknown",
-                        "Category": "Unknown"
-                    })
-        downloads['properties'] = pd.DataFrame(properties_list)
+            df_props = pd.DataFrame(rows)
+            # Stable sort by Parameter for readability
+            df_props.sort_values(by=["Parameter"], inplace=True)
+        # Shape 2: plain dict {key: value}
+        elif isinstance(properties, dict):
+            df_props = pd.DataFrame(list(properties.items()), columns=['Parameter', 'Value'])
+        # Shape 3: list of dicts (fallback)
+        elif isinstance(properties, list):
+            df_props = pd.DataFrame(properties)
+            # Try to normalize a common pattern
+            possible_cols = ["Parameter", "Value", "Unit", "Type", "Calculator", "Family"]
+            existing = [c for c in possible_cols if c in df_props.columns]
+            if existing:
+                df_props = df_props[existing]
+        else:
+            raise ValueError(f"Unexpected properties data format: {type(properties)}")
+        
+        st.dataframe(df_props, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"Could not format properties data: {e}")
+        st.json(properties)
+
+# UPDATED: Enhanced experimental data rendering using interactive dataframe
+def _render_experimental_data_interactive(experimental_data: List[Dict[str, Any]]):
+    """Render experimental data in an interactive table with sorting and selection."""
     
-    # Experimental Data (Updated to flatten the structured metadata for CSV)
-    if cleaned_results["experimental_data"]:
-        # We need to flatten the 'Parsed_Metadata' dictionary back into columns for the CSV export
+    # Filter out system notes (like truncation messages) from the main data display
+    actual_data_records = [r for r in experimental_data if isinstance(r, dict) and r.get('DataType') != 'SystemNote']
+
+    if not actual_data_records:
+        st.info("No experimental data retrieved or available after filtering.")
+        return
+
+    st.subheader(f"Experimental Data Records ({len(actual_data_records)})")
+
+    # --- Data Preparation ---
+    try:
+        df = pd.DataFrame(actual_data_records)
+
+        # Define desired columns and their order
+        # 'Publication_Year' is added by data_formatter.py
+        columns_to_display_map = {
+            'Publication_Year': 'Year',
+            'Endpoint': 'Endpoint',
+            'Value': 'Value',
+            'Unit': 'Unit',
+            'DataType': 'Type',
+            'Reliability': 'Reliability',
+            'Reference': 'Reference',
+            # We keep Parsed_Metadata internally for the detail view, but hide it in the main table
+            'Parsed_Metadata': 'Parsed_Metadata' 
+        }
+        
+        # Filter columns that actually exist in the DataFrame
+        existing_columns = [col for col in columns_to_display_map.keys() if col in df.columns]
+        
+        df_display = df[existing_columns].copy()
+        
+        # Rename columns for display
+        df_display.rename(columns=columns_to_display_map, inplace=True)
+
+        # Handle the 'Year' column for proper sorting
+        if 'Year' in df_display.columns:
+            # Convert 'Year' to nullable integer type (Pandas >= 1.0.0)
+            try:
+                # Use Int64 (capital I) to handle potential None/NaN values gracefully
+                df_display['Year'] = df_display['Year'].astype('Int64')
+            except TypeError:
+                # Fallback if conversion fails (e.g., non-numeric strings slipped through)
+                df_display['Year'] = pd.to_numeric(df_display['Year'], errors='coerce')
+
+            # NEW: Default Sorting (by Year descending, then Endpoint)
+            try:
+                # Sort by Year (descending) and Endpoint (ascending). Missing years (NaN/NaT) are placed last.
+                df_display.sort_values(by=['Year', 'Endpoint'], ascending=[False, True], inplace=True, na_position='last')
+            except Exception as e:
+                st.warning(f"Could not apply default sorting: {e}")
+                logger.warning(f"Sorting failed: {e}. DataFrame dtypes: {df_display.dtypes}")
+
+    except Exception as e:
+        st.error(f"Error preparing data table: {e}")
+        st.json(experimental_data) # Fallback to raw JSON
+        return
+
+    # --- Display Table (Interactive) ---
+    st.info("Data sorted by Year (Newest first). Click on a row to view detailed study metadata below.")
+
+    # Define column configurations (Hiding Parsed_Metadata)
+    column_config = {}
+    # Identify the actual name used for Parsed_Metadata in df_display after renaming
+    metadata_display_name = columns_to_display_map.get('Parsed_Metadata', 'Parsed_Metadata')
+
+    if metadata_display_name in df_display.columns:
+        # Hide this column from the main table view
+        column_config[metadata_display_name] = None 
+
+    # Use st.dataframe with on_select for direct row interaction
+    selection = st.dataframe(
+        df_display,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun", # Rerun the app when a row is selected
+        selection_mode="single-row",
+        column_config=column_config
+    )
+
+    # --- Metadata Details View ---
+    st.subheader("Study Metadata Details")
+    
+    selected_rows = selection.get("selection", {}).get("rows")
+    
+    if selected_rows:
+        # Get the positional index of the selected row in the displayed (sorted) data
+        selected_positional_index = selected_rows[0]
+        
         try:
-            exp_data_list = cleaned_results["experimental_data"]
-            
-            # Use pandas json_normalize to flatten the 'Parsed_Metadata' column
-            
-            # Ensure 'Parsed_Metadata' exists in all records before normalization
-            for record in exp_data_list:
-                # Handle potential non-dict records that might have slipped through (e.g. error records)
-                if not isinstance(record, dict):
-                    continue
-                if 'Parsed_Metadata' not in record or record['Parsed_Metadata'] is None:
-                    record['Parsed_Metadata'] = {}
+            # Retrieve the metadata directly from df_display using the positional index.
+            # We must use iloc because the index might be non-sequential after sorting.
+            selected_row_data = df_display.iloc[selected_positional_index]
 
-            # Identify keys other than 'Parsed_Metadata' to use as 'meta' (i.e., columns to keep)
-            if exp_data_list:
-                # Get all unique keys across all records, excluding Parsed_Metadata and potential error fields
-                all_keys = set().union(*(d.keys() for d in exp_data_list if isinstance(d, dict)))
-                # Case-insensitive exclusion for robustness
-                keys_to_exclude = {'parsed_metadata', 'metadata', 'processing_error'}
-                meta_keys = [key for key in all_keys if key.lower() not in keys_to_exclude]
+            if metadata_display_name in df_display.columns:
+                metadata = selected_row_data.get(metadata_display_name)
+                
+                # Check if metadata is a valid dictionary (Pandas might convert empty dicts to NaN)
+                if metadata and isinstance(metadata, dict) and metadata:
+                    # Display metadata using st.json for a clean, collapsible view of the structured data
+                    st.json(metadata)
+                else:
+                    st.warning("No structured metadata available for the selected record (parsing might have failed).")
             else:
-                meta_keys = []
+                    st.error("Metadata column not found in the data structure.")
 
-            # Normalize the data
-            # This will flatten 'Parsed_Metadata' while keeping the 'meta_keys' alongside
-            df_exp = pd.json_normalize(
-                exp_data_list,
-                errors='ignore',
-                meta=meta_keys if meta_keys else None,
-                record_path=None,
-                meta_prefix=None,
-            )
-            
-            # When record_path is None, normalization typically puts metadata under 'Parsed_Metadata.XXX'
-            
-            if any(col.startswith('Parsed_Metadata.') for col in df_exp.columns):
-                 # Rename columns: Parsed_Metadata.Key -> Meta_Key
-                 rename_dict = {col: f"Meta_{col.split('.', 1)[1]}" for col in df_exp.columns if col.startswith('Parsed_Metadata.')}
-                 df_exp = df_exp.rename(columns=rename_dict)
-            
-            # Drop the original Parsed_Metadata column if it still exists
-            if 'Parsed_Metadata' in df_exp.columns:
-                    df_exp = df_exp.drop(columns=['Parsed_Metadata'])
-            
-            # Also drop 'Metadata' or 'Processing_Error' if they exist (case-insensitive cleanup)
-            cols_to_drop = [col for col in df_exp.columns if col.lower() in {'metadata', 'processing_error'}]
-            if cols_to_drop:
-                df_exp = df_exp.drop(columns=cols_to_drop)
-
-            downloads['experimental'] = df_exp
-
+        except IndexError:
+            st.error("Selected index is out of bounds. Please try selecting again.")
         except Exception as e:
-            # Fallback if normalization fails
-            logger.error(f"Error flattening experimental data for download: {e}. Falling back to basic DataFrame.")
-            df_exp = pd.DataFrame(cleaned_results["experimental_data"])
-            # Serialize the dictionary column for CSV if normalization failed
-            if 'Parsed_Metadata' in df_exp.columns:
-                df_exp['Parsed_Metadata_JSON'] = df_exp['Parsed_Metadata'].apply(lambda x: json.dumps(x) if isinstance(x, dict) else str(x))
-                df_exp = df_exp.drop(columns=['Parsed_Metadata'])
-            downloads['experimental'] = df_exp
+            st.error(f"Error retrieving metadata details: {e}")
 
-    
-    # Profiling Data (Remains the same)
-    if cleaned_results["profiling"] and isinstance(cleaned_results["profiling"], dict):
-        results_list = []
-        profiling_results = cleaned_results["profiling"].get("results")
+    else:
+        st.info("Select a record above to see details.")
 
-        if profiling_results:
-            if isinstance(profiling_results, dict):
-                # Handle individual profilers (fast profilers approach)
-                for profiler_name, profiler_data in profiling_results.items():
-                    result_data = profiler_data.get('result', [])
-                    profiler_type = profiler_data.get('type', 'Unknown')
 
-                    if isinstance(result_data, list) and result_data:
-                        for category in result_data:
-                            if isinstance(category, dict):
-                                 category_name = category.get("Name") or category.get("Category", str(category))
-                            else:
-                                 category_name = str(category)
+def _render_profiling_data(profiling_data: Dict[str, Any]):
+    """Render profiling data (aware of the new structure from qsar_api.get_chemical_profiling)."""
+    st.subheader("Profiling and Reactivity Alerts")
 
-                            results_list.append({
-                                "Profiler": profiler_name,
-                                "Type": profiler_type,
-                                "Category": category_name
-                            })
-                    else:
-                        results_list.append({
-                            "Profiler": profiler_name,
-                            "Type": profiler_type,
-                            "Category": "No categories found"
-                        })
-            # ... (List handling omitted for brevity)
+    if not profiling_data:
+        st.info("No profiling data retrieved.")
+        return
 
-        if results_list:
-            downloads['profiling_results'] = pd.DataFrame(results_list)
+    # High-level status
+    status = profiling_data.get("status", "Unknown")
+    note = profiling_data.get("note", "")
+    if status == "Success":
+        st.success(f"{status}: {note}")
+    elif status in ("Partial success", "Limited"):
+        st.warning(f"{status}: {note}")
+    elif status == "Error":
+        st.error(f"{status}: {profiling_data.get('error', 'No details provided')}")
+    else:
+        st.info(note or f"Status: {status}")
 
-    # Metabolism Data (Remains the same, handling AttributeError fix from previous iteration)
-    if cleaned_results.get("metabolism") and cleaned_results["metabolism"].get("simulations"):
-        simulations = cleaned_results["metabolism"]["simulations"]
-        all_metabolites_list = []
+    # Available profilers (metadata)
+    available = profiling_data.get("available_profilers", [])
+    if available:
+        with st.expander("Available profilers"):
+            try:
+                df_av = pd.DataFrame(available)[["name", "type", "guid", "status"]]
+            except Exception:
+                df_av = pd.DataFrame(available)
+            st.dataframe(df_av, use_container_width=True, hide_index=True)
 
-        for guid, simulation_result in simulations.items():
-            metabolites = simulation_result.get("metabolites", [])
-            simulator_name = simulation_result.get("simulator_name", f"GUID: {guid}")
-            
-            if metabolites:
-                for metabolite in metabolites:
-                    # FIX: Robustly handle metabolite data type
-                    if isinstance(metabolite, dict):
-                        # If it's a dictionary, we can safely copy it
-                        metabolite_record = metabolite.copy()
-                    elif isinstance(metabolite, str):
-                        # If the API returned a string (e.g., just SMILES), create a dict structure
-                        metabolite_record = {"SMILES": metabolite, "Note": "Simple structure returned by API"}
-                    else:
-                        # Handle other unexpected types gracefully
-                        metabolite_record = {"Note": f"Unexpected data type: {type(metabolite)}", "RawValue": str(metabolite)}
-                        try:
-                            # Log a warning in the Streamlit UI if possible, otherwise print to console
-                            st.warning(f"Warning: Unexpected data type found in metabolites list (expected dict, got {type(metabolite)}).")
-                        except Exception:
-                            print(f"Warning: Unexpected data type found in metabolites list (expected dict, got {type(metabolite)}).")
+    # Actual results (per profiler)
+    results = profiling_data.get("results", {})
+    if not results:
+        return
 
-                    # Add simulator information to each metabolite record
-                    metabolite_record['SimulatorName'] = simulator_name
-                    metabolite_record['SimulatorGUID'] = guid
-                    all_metabolites_list.append(metabolite_record)
-
-        if all_metabolites_list:
-            df_meta = pd.DataFrame(all_metabolites_list)
-             # Clean up list columns (like Names) for CSV export
-            for col in df_meta.columns:
-                 # Check if the column contains any lists safely
+    st.markdown("---")
+    st.markdown("#### Profiler Results")
+    for profiler_name, info in results.items():
+        payload = info.get("result")
+        profiler_type = info.get("type", "Profiler")
+        guid = info.get("guid", "")
+        with st.expander(f"{profiler_name}  •  {profiler_type}  •  GUID: {guid}"):
+            if isinstance(payload, list) and payload:
                 try:
-                    if df_meta[col].apply(lambda x: isinstance(x, list)).any():
-                        df_meta[col] = df_meta[col].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, list) else x)
+                    df = pd.DataFrame(payload)
+                    # Select common columns if present
+                    preferred = [c for c in ["Alert", "Category", "Explanation", "SubstanceCategory", "Endpoint"] if c in df.columns]
+                    st.dataframe(df[preferred] if preferred else df, use_container_width=True, hide_index=True)
                 except Exception as e:
-                     # Handle potential errors during apply (e.g. mixed types that are hard to process)
-                    print(f"Error processing column {col} for CSV export: {e}")
-                    df_meta[col] = df_meta[col].astype(str)
+                    st.warning(f"Could not display table for {profiler_name}: {e}")
+                    st.json(payload)
+            else:
+                st.json(payload or {"note": "No alerts returned"})
 
-            
-            # Reorder columns to put Simulator info first
-            cols = df_meta.columns.tolist()
-            if 'SimulatorName' in cols and 'SimulatorGUID' in cols:
-                # Use safe removal and insertion
-                try:
-                    if 'SimulatorGUID' in cols:
-                        cols.insert(0, cols.pop(cols.index('SimulatorGUID')))
-                    if 'SimulatorName' in cols:
-                        cols.insert(0, cols.pop(cols.index('SimulatorName')))
-                    df_meta = df_meta[cols]
-                except ValueError:
-                    # Handle case where pop/index fails unexpectedly
-                    pass
+def _render_metabolism_data(metabolism_data: Dict[str, Any]):
+    """Render metabolism simulation results."""
+    st.subheader("Metabolism Simulation Results")
 
+    if not metabolism_data:
+        st.info("Metabolism data not available.")
+        return
 
-            downloads['metabolism'] = df_meta
+    # Display overall status
+    status = metabolism_data.get("status", "Unknown")
+    note = metabolism_data.get("note", "N/A")
 
-    return downloads
+    if status == "Skipped":
+        st.info(f"Status: {status}. {note}")
+    elif status == "Success":
+        st.success(f"Status: {status}. {note}")
+    elif status == "Partial Success":
+        st.warning(f"Status: {status}. {note}")
+    else:
+        st.error(f"Status: {status}. {note}")
+
+    # Display individual simulation results
+    simulations = metabolism_data.get("simulations", {})
+    
+    if simulations:
+        st.markdown("---")
+        st.markdown("#### Details per Simulator")
+
+        for sim_guid, sim_result in simulations.items():
+            sim_name = sim_result.get("simulator_name", f"GUID: {sim_guid}")
+            sim_status = sim_result.get("status", "Unknown")
+            metabolites = sim_result.get("metabolites", [])
+
+            # Use expander for each simulator
+            with st.expander(f"{sim_name} - Status: {sim_status} ({len(metabolites)} metabolites analyzed)"):
+                st.markdown(f"**Details:** {sim_result.get('note', 'N/A')}")
+                
+                if metabolites:
+                    try:
+                        metabolites_df = pd.DataFrame(metabolites)
+                        desired_cols = ['Smiles', 'Generation', 'Probability', 'Pathway', 'Name', 'Cas']
+                        available_cols = [col for col in desired_cols if col in metabolites_df.columns]
+                        
+                        if available_cols:
+                                st.dataframe(metabolites_df[available_cols], use_container_width=True, hide_index=True)
+                        else:
+                            st.dataframe(metabolites_df, use_container_width=True, hide_index=True)
+                    
+                    except Exception as e:
+                        st.warning(f"Could not display metabolites for {sim_name} in table format: {e}")
+                        st.json(metabolites)
 
 def render_download_section(results: Dict[str, Any], identifier: str):
-    """Render the download section for raw data and reports"""
-    st.header("Download Raw Data (CSV)")
+    """Render section for downloading the raw QSAR Toolbox data."""
+    st.header("Download Data")
     
-    # Get downloadable data
-    downloads = create_downloadable_data(results)
-    
-    # Raw Data Downloads (Updated to 4 columns)
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        # Properties Data CSV
-        if 'properties' in downloads and not downloads['properties'].empty:
-            csv = downloads['properties'].to_csv(index=False)
-            st.download_button(
-                label="Download Properties",
-                data=csv,
-                file_name=f"{identifier}_properties.csv",
-                mime="text/csv"
-            )
-        else:
-            st.info("No properties data")
-    
-    with col2:
-         # Experimental Data CSV
-        if 'experimental' in downloads and not downloads['experimental'].empty:
-            # Ensure Value column is string for consistent CSV export
-            df_exp = downloads['experimental'].copy()
-            
-            # Ensure all object columns (including potentially mixed types) are string for CSV export consistency
-            for col in df_exp.columns:
-                if df_exp[col].dtype == 'object':
-                    # Use astype(str) for robust conversion, handling None/NaN gracefully
-                    df_exp[col] = df_exp[col].astype(str)
+    # Use the comprehensive log if available as it contains the processed data
+    if 'comprehensive_log' in st.session_state and st.session_state.comprehensive_log:
+        data_to_download = st.session_state.comprehensive_log.get('data_retrieval', {}).get('processed_qsar_toolbox_data', results)
+        filename_suffix = "_processed_data.json"
+        label = "Download Processed QSAR Data (JSON)"
+    else:
+        # Fallback to the raw results if log is not yet generated
+        data_to_download = results
+        filename_suffix = "_raw_data.json"
+        label = "Download Raw QSAR Data (JSON)"
 
-            csv = df_exp.to_csv(index=False)
-            st.download_button(
-                label="Download Experimental Data",
-                data=csv,
-                file_name=f"{identifier}_experimental_data.csv",
-                mime="text/csv"
-            )
-        else:
-            st.info("No experimental data")
+    try:
+        # Safely convert to JSON string for download
+        json_data = safe_json(data_to_download)
+        
+        st.download_button(
+            label=label,
+            data=json_data,
+            file_name=f"{identifier}{filename_suffix}",
+            mime="application/json",
+            help="Download the data retrieved from QSAR Toolbox used for this analysis (includes metadata parsing and filters)."
+        )
+    except Exception as e:
+        st.error(f"Error preparing data for download: {e}")
 
-    with col3:
-        # Profiling Data CSV
-        if 'profiling_results' in downloads and not downloads['profiling_results'].empty:
-            csv = downloads['profiling_results'].to_csv(index=False)
-            st.download_button(
-                label="Download Profiling Results",
-                data=csv,
-                file_name=f"{identifier}_profiling_results.csv",
-                mime="text/csv"
-            )
-        else:
-            st.info("No profiling data")
-
-    with col4:
-        # NEW: Metabolism Data CSV
-        if 'metabolism' in downloads and not downloads['metabolism'].empty:
-            csv = downloads['metabolism'].to_csv(index=False)
-            st.download_button(
-                label="Download Metabolites",
-                data=csv,
-                file_name=f"{identifier}_metabolites.csv",
-                mime="text/csv"
-            )
-        else:
-            st.info("No metabolism data")
+    # Download Experimental Data (CSV)
+    exp_data = results.get('experimental_data', [])
+    if exp_data:
+        # Filter out SystemNotes before CSV download
+        download_data = [r for r in exp_data if isinstance(r, dict) and r.get("DataType") != "SystemNote"]
+        if download_data:
+            try:
+                df_exp = pd.DataFrame(download_data)
+                # Convert DataFrame to CSV in memory
+                csv_buffer = io.StringIO()
+                # Drop internal processing columns from the CSV export
+                df_exp.drop(columns=['Parsed_Metadata', 'Metadata'], errors='ignore').to_csv(csv_buffer, index=False)
+                
+                st.download_button(
+                    label="Download Experimental Data (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"{identifier}_experimental_data.csv",
+                    mime="text/csv",
+                    help="Download the processed experimental data table as a CSV file."
+                )
+            except Exception as e:
+                st.error(f"Could not generate CSV download: {e}")
