@@ -9,6 +9,8 @@ import streamlit as st
 
 from oqt_assistant.utils.qsar_api import QSARToolboxAPI, SearchOptions, QSARConnectionError, QSARTimeoutError, QSARResponseError
 from oqt_assistant.utils.data_formatter import format_chemical_data  # NEW
+from oqt_assistant.components.search import REGULATORY_ENDPOINTS # MODIFIED
+from oqt_assistant.utils.structure_3d import render_smiles_3d # NEW IMPORT
 
 try:
     from oqt_assistant.components.search import REGULATORY_ENDPOINTS
@@ -57,6 +59,7 @@ def _init_wizard_state():
             "data": {
                 "llm_temperature_override": None,
                 "llm_max_tokens_override": None,
+                "reasoning_effort": "medium",
                 "chemical_identifier": "",
                 "search_type": "name",
                 "chemical_resolved": False,
@@ -201,10 +204,31 @@ def _step_1_setup_configuration(get_llm_models, ping_qsar):
 
     st.subheader("LLM Parameter Overrides (Optional)")
     st.info("Adjust LLM parameters for this specific run. Leave unchecked to use sidebar settings.")
-    use_temp_override = st.checkbox("Override Temperature", value=(d.get("llm_temperature_override") is not None), key="wiz_step1_use_temp_override")
-    d["llm_temperature_override"] = st.slider("Temperature (Creativity)", 0.0, 1.0, value=(d.get("llm_temperature_override") or 0.0), step=0.05, key="wiz_step1_temp_override") if use_temp_override else None
+    
+    # Check if GPT-5 is selected
+    model_name = llm_config.get("model_name", "")
+    is_gpt5 = "gpt-5" in model_name.lower()
+    
+    # For non–GPT‑5 models, show Temperature (default 0.15)
+    if not is_gpt5:
+        use_temp_override = st.checkbox("Override Temperature", value=(d.get("llm_temperature_override") is not None), key="wiz_step1_use_temp_override")
+        d["llm_temperature_override"] = st.slider("Temperature (Creativity)", 0.0, 1.0, value=(d.get("llm_temperature_override") or 0.15), step=0.05, key="wiz_step1_temp_override") if use_temp_override else None
+    else:
+        st.caption("GPT‑5 ignores temperature; using reasoning controls instead.")
+        d["llm_temperature_override"] = None  # Clear temperature for GPT-5
+        d["reasoning_effort"] = st.select_slider(
+            "Reasoning Effort (GPT‑5)",
+            options=["minimal", "medium", "high"],
+            value=d.get("reasoning_effort", "medium"),
+            help="Controls how much thinking the model does before replying; billed as output tokens.",
+            key="wiz_step1_reasoning_effort"
+        )
+    
     use_tokens_override = st.checkbox("Override Max Output Tokens", value=(d.get("llm_max_tokens_override") is not None), key="wiz_step1_use_tokens_override")
-    d["llm_max_tokens_override"] = st.number_input("Max Output Tokens", min_value=512, max_value=32000, value=(d.get("llm_max_tokens_override") or 4096), step=512, key="wiz_step1_tokens_override") if use_tokens_override else None
+    d["llm_max_tokens_override"] = st.number_input("Max Output Tokens", min_value=512, max_value=32000, value=(d.get("llm_max_tokens_override") or 10000), step=512, key="wiz_step1_tokens_override") if use_tokens_override else None
+    
+    if is_gpt5:
+        st.caption("Note: GPT‑5 'reasoning' tokens are charged as **output** tokens.")
 
     can_proceed = is_qsar_ready and is_llm_ready and (st.session_state.get("connection_status") is True)
     if not can_proceed:
@@ -311,6 +335,16 @@ def _step_2_chemical_identification():
         chem_data = d.get("resolved_chemical_data", {}) or {}
         st.success("✅ Chemical Confirmed")
         _render_chem_identity_card(chem_data)
+
+    smiles = chem_data.get("Smiles") or ""
+    with st.expander("3D Preview", expanded=True):
+        if smiles:
+            try:
+                render_smiles_3d(smiles, height=240, width=0) # width=0 lets Streamlit size it
+            except Exception as e:
+                st.warning(f"3D preview unavailable: {e}")
+        else:
+            st.caption("No SMILES available for this record.")
 
     if errs.get("chemical_resolved"):
         st.error(errs["chemical_resolved"])
@@ -526,6 +560,7 @@ def _step_6_review_and_run(on_run_pipeline):
             "rax_similarity_basis": d.get("rax_similarity_basis"),
             "llm_temperature_override": d.get("llm_temperature_override"),
             "llm_max_tokens_override": d.get("llm_max_tokens_override"),
+            "reasoning_effort": d.get("reasoning_effort"),
             "resolved_chemical_data": chem_data,
             "case_label": d["case_label"],
         }

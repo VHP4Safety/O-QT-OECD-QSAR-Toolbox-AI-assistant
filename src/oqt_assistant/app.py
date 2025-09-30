@@ -78,12 +78,20 @@ LLM_MODELS = {
         "gpt-4.1 (Recommended)": {"cost_input": 3.00, "cost_output": 12.00, "id": "gpt-4.1"},
         "gpt-4.1-mini": {"cost_input": 0.80, "cost_output": 3.20, "id": "gpt-4.1-mini"},
         "gpt-4.1-nano": {"cost_input": 0.20, "cost_output": 0.80, "id": "gpt-4.1-nano"},
+        # --- New GPT-5 series (OpenAI) ---
+        "gpt-5":       {"cost_input": 1.25, "cost_output": 10.00, "id": "gpt-5"},
+        "gpt-5-mini":  {"cost_input": 0.25, "cost_output":  2.00, "id": "gpt-5-mini"},
+        "gpt-5-nano":  {"cost_input": 0.05, "cost_output":  0.40, "id": "gpt-5-nano"},
     },
     "OpenRouter": {
         "OpenAI GPT-4.1": {"cost_input": 3.00, "cost_output": 12.00, "id": "openai/gpt-4.1"},
         "OpenAI GPT-4.1 Mini": {"cost_input": 0.80, "cost_output": 3.20, "id": "openai/gpt-4.1-mini"},
         "OpenAI GPT-4.1 Nano": {"cost_input": 0.20, "cost_output": 0.80, "id": "openai/gpt-4.1-nano"},
         "OpenAI GPT-4o": {"cost_input": 5.00, "cost_output": 15.00, "id": "openai/gpt-4o"},
+        # --- New GPT-5 series (OpenRouter) ---
+        "OpenAI GPT-5":       {"cost_input": 1.25, "cost_output": 10.00, "id": "openai/gpt-5"},
+        "OpenAI GPT-5 Mini":  {"cost_input": 0.25, "cost_output":  2.00, "id": "openai/gpt-5-mini"},
+        "OpenAI GPT-5 Nano":  {"cost_input": 0.05, "cost_output":  0.40, "id": "openai/gpt-5-nano"},
         "DeepSeek V3 (Free) - High Performance": {"cost_input": 0.00, "cost_output": 0.00, "id": "deepseek/deepseek-chat:free"},
         "Llama 3.3 70B (Free) - High Performance": {"cost_input": 0.00, "cost_output": 0.00, "id": "meta-llama/llama-3.3-70b-instruct:free"},
         "Llama 4 Scout (Free) - Huge Context": {"cost_input": 0.00, "cost_output": 0.00, "id": "meta-llama/llama-4-scout:free"},
@@ -156,6 +164,9 @@ def _on_run_pipeline(config: dict):
     
     if config.get("llm_max_tokens_override") is not None:
         llm_config["max_tokens_override"] = config["llm_max_tokens_override"]
+        
+    if config.get("reasoning_effort") is not None:
+        llm_config["reasoning_effort"] = config["reasoning_effort"]
 
     # Scope Config mapping (Wizard Step 4 and 5), including new exclusions and RA strategy
     scope_config = {
@@ -229,6 +240,8 @@ def initialize_session_state():
         # NEW: Profiler catalog + selection
         'available_profilers': [],
         'selected_profiler_guids': [],
+        # LLM error tracking
+        'last_llm_error': None,
     }
 
     # --- Configuration State Initialization ---
@@ -249,8 +262,8 @@ def initialize_session_state():
             'api_base': None, # Used for OpenRouter
             'config_complete': bool(default_api_key),
             # Default parameters (used if not overridden)
-            'temperature': 0.1,
-            'max_tokens': 4096,
+            'temperature': 0.15,
+            'max_tokens': 10000,
         }
 
     if 'qsar_config' not in st.session_state:
@@ -336,6 +349,10 @@ def check_connection(api_client: QSARToolboxAPI) -> bool:
         st.session_state.connection_status = False
         # st.error(f"⚠️ Unexpected error checking connection: {str(e)}")
         return False
+
+def _estimate_run_cost(cost_input: float, cost_output: float, input_tokens: int, output_tokens: int) -> float:
+    """Return estimated USD for one run at given token counts."""
+    return (input_tokens / 1_000_000) * cost_input + (output_tokens / 1_000_000) * cost_output
 
 
 # ... (Keep existing render functions: render_reports_section, render_specialist_downloads) ...
@@ -804,7 +821,26 @@ def render_configuration_ui():
         if cost_input == 0 and cost_output == 0:
             st.sidebar.info("Cost: Free (via OpenRouter)")
         else:
-            st.sidebar.info(f"Cost (USD per 1M tokens):\nInput: ${cost_input:.2f} | Output: ${cost_output:.2f}")
+            st.sidebar.info(
+                f"**Price (per 1M tokens)**  \n"
+                f"• Input: **${cost_input:.2f}**  \n"
+                f"• Output: **${cost_output:.2f}**"
+            )
+            with st.sidebar.expander("Per‑run estimate (at your defaults)"):
+                # Let user set an assumption for prompt size; output defaults to max_tokens
+                assumed_input = st.number_input(
+                    "Assumed input tokens per run",
+                    min_value=0, max_value=300_000, step=500, value=2_000,
+                    help="Used only for this estimate. Change based on your typical prompt size."
+                )
+                output_tokens = int(st.session_state.llm_config.get('max_tokens', 10000) or 10000)
+                est = _estimate_run_cost(cost_input, cost_output, assumed_input, output_tokens)
+                output_only = _estimate_run_cost(0.0, cost_output, 0, output_tokens)
+                st.markdown(
+                    f"**Estimated cost / run:** **${est:,.4f}**  \n"
+                    f"(input {assumed_input:,} + output {output_tokens:,})"
+                )
+                st.caption(f"Output‑only (max): ${output_only:,.4f}")
     else:
         st.sidebar.warning("Cost information unavailable.")
 
@@ -824,16 +860,54 @@ def render_configuration_ui():
     else:
         st.session_state.llm_config['api_base'] = None
 
-    # Display Default Parameters (can be overridden in Guided Wizard)
+    # Display Default Parameters (with GPT-5 awareness)
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Default LLM Parameters:**")
-    st.sidebar.markdown(f"Temperature: {st.session_state.llm_config['temperature']}")
-    st.sidebar.markdown(f"Max Tokens: {st.session_state.llm_config['max_tokens']}")
-    st.sidebar.info("These parameters can be overridden during a Guided Wizard run.")
-
+    
+    # Get selected model info for GPT-5 detection
+    selected_model_id = st.session_state.llm_config.get("model_id")
+    if not selected_model_id and model_name and provider:
+        try:
+            selected_model_id = LLM_MODELS[provider][model_name]['id']
+        except (KeyError, TypeError):
+            selected_model_id = ""
+    
+    is_gpt5 = "gpt-5" in (selected_model_id or "").lower()
+    
+    if is_gpt5:
+        st.sidebar.markdown("**Default LLM Parameters (GPT‑5):**")
+        st.sidebar.info("GPT‑5 uses reasoning mode: temperature is fixed by the provider.")
+        
+        # Show max completion tokens, not max tokens
+        current_max = int(st.session_state.llm_config.get("max_tokens_override") or
+                         st.session_state.llm_config.get("max_tokens", 10000))
+        new_max = st.sidebar.number_input(
+            "Max completion tokens",
+            min_value=256,
+            max_value=64000,
+            value=current_max,
+            step=256,
+            help="Upper bound on generated tokens (reasoning + final output).",
+            key="gpt5_max_tokens_sidebar"
+        )
+        st.session_state.llm_config["max_tokens_override"] = int(new_max)
+        st.sidebar.markdown(f"Max Completion Tokens: {new_max}")
+        st.sidebar.caption("Note: GPT‑5 'reasoning' tokens are charged as output tokens.")
+    else:
+        st.sidebar.markdown("**Default LLM Parameters:**")
+        st.sidebar.markdown(f"Temperature: {st.session_state.llm_config['temperature']}")
+        st.sidebar.markdown(f"Max Tokens: {st.session_state.llm_config['max_tokens']}")
+        st.sidebar.info("These parameters can be overridden during a Guided Wizard run.")
 
     # Check configuration completeness
     st.session_state.llm_config['config_complete'] = bool(api_key and model_name)
+
+    # Display last LLM error if any
+    if st.session_state.get("last_llm_error"):
+        st.sidebar.markdown("---")
+        st.sidebar.warning(f"⚠️ Last LLM error: {st.session_state['last_llm_error']}")
+        if st.sidebar.button("Clear Error", key="clear_llm_error"):
+            st.session_state["last_llm_error"] = None
+            st.rerun()
 
     # --- Status Display ---
     st.sidebar.subheader("Status")
@@ -1031,38 +1105,23 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
             # **Handle experimental data truncation for LLM agents**
             
             # Use the processed/filtered experimental data (already processed in Step 1.5)
-            experimental_data_list = results.get('experimental_data', [])
+            # NEW: sort newest-first (then by endpoint) so any truncation keeps the most recent studies
+            experimental_data_list_unsorted = results.get('experimental_data', [])
+            experimental_data_list = sorted(
+                experimental_data_list_unsorted,
+                key=lambda r: ((r or {}).get('Publication_Year') or -1, str((r or {}).get('Endpoint') or '')),
+                reverse=True
+            )
 
-            # (Truncation logic remains the same)
-            experimental_data_for_llm_processing = experimental_data_list
-            truncation_active_for_llm = False
-            truncation_note_for_llm = {}
-
-            if len(experimental_data_list) > MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA:
+            # Apply truncation if needed for LLM processing
+            truncation_active_for_llm = len(experimental_data_list) > MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA
+            if truncation_active_for_llm:
                 experimental_data_for_llm_processing = experimental_data_list[:MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA]
-                truncation_active_for_llm = True
-
-                truncation_note_content = (
-                    f"Note: The original {len(experimental_data_list)} experimental data records "
-                    f"have been automatically truncated to the first {MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA} records for this LLM-based analysis "
-                    f"due to processing volume limits. The agent should summarize these initial records. "
-                    f"The complete dataset remains available in the application's UI tables and for download."
-                )
-                # This dictionary structure should be compatible with typical experimental data items.
-                truncation_note_for_llm = {
-                    "Endpoint": "System Information",
-                    "Value": truncation_note_content,
-                    "Unit": "LLM Processing Note",
-                    "Reference": "QSAR Assistant System Notification",
-                    "DataType": "SystemNote", # Adding a type hint
-                    # Include other common fields if your experimental data items usually have them, e.g., with "N/A"
-                    "TestGuid": "N/A",
-                    "Reliability": "N/A",
-                    "Parsed_Metadata": {} # Ensure structured metadata field exists
-                }
-                # Prepend the note so the LLM encounters it first.
-                experimental_data_for_llm_processing = [truncation_note_for_llm] + experimental_data_for_llm_processing
-
+                experimental_data_for_llm_processing.append({
+                    "note": f"Dataset truncated: showing first {MAX_RECORDS_FOR_LLM_EXPERIMENTAL_DATA} of {len(experimental_data_list)} total experimental records."
+                })
+            else:
+                experimental_data_for_llm_processing = experimental_data_list
 
             # Wrap experimental data list in a dict for consistent agent input type
             experimental_data_dict_for_llm = {"experimental_results": experimental_data_for_llm_processing}
@@ -1073,28 +1132,29 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
 
             # Create tasks for specialist agents
             task_phys = asyncio.create_task(analyze_physical_properties(properties_data, analysis_context, current_llm_config))
-            task_env = asyncio.create_task(analyze_environmental_fate(properties_data, analysis_context, current_llm_config))
+            task_env  = asyncio.create_task(analyze_environmental_fate(properties_data, analysis_context, current_llm_config))
             task_prof = asyncio.create_task(analyze_profiling_reactivity(profiling_data, analysis_context, current_llm_config))
-            task_exp = asyncio.create_task(analyze_experimental_data(experimental_data_dict_for_llm, analysis_context, current_llm_config))
+            task_exp  = asyncio.create_task(analyze_experimental_data(experimental_data_dict_for_llm, analysis_context, current_llm_config))
             task_meta = asyncio.create_task(analyze_metabolism(metabolism_data, analysis_context, current_llm_config))
 
-            # Run core tasks concurrently - Use await asyncio.gather
-            core_specialist_outputs_list: List[str] = await asyncio.gather(
-                task_phys,
-                task_env,
-                task_prof,
-                task_exp,
-                task_meta
+            # ✅ Tolerate errors so the pipeline can continue
+            results_gather = await asyncio.gather(
+                task_phys, task_env, task_prof, task_exp, task_meta,
+                return_exceptions=True
             )
 
-            # Store core specialist outputs
-            st.session_state.specialist_outputs_dict.update({
-                "Physical_Properties": str(core_specialist_outputs_list[0]),
-                "Environmental_Fate": str(core_specialist_outputs_list[1]),
-                "Profiling_Reactivity": str(core_specialist_outputs_list[2]),
-                "Experimental_Data": str(core_specialist_outputs_list[3]),
-                "Metabolism": str(core_specialist_outputs_list[4])
-            })
+            labels = ["Physical_Properties","Environmental_Fate","Profiling_Reactivity","Experimental_Data","Metabolism"]
+            core_specialist_outputs_list = []
+            for lbl, res in zip(labels, results_gather):
+                if isinstance(res, Exception):
+                    logger.error(f"{lbl} agent failed: {res}", exc_info=True)
+                    fallback = f"[{lbl} agent failed: {res}]"
+                    core_specialist_outputs_list.append(fallback)
+                    st.session_state.specialist_outputs_dict[lbl] = fallback
+                else:
+                    txt = str(res)
+                    core_specialist_outputs_list.append(txt)
+                    st.session_state.specialist_outputs_dict[lbl] = txt
 
             # --- Step 4: Read Across Agent ---
             update_progress(0.90, "🧬 Analyzing Read-Across Potential...")
@@ -1119,14 +1179,32 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
 
             # --- Step 5: Synthesize Final Report ---
             update_progress(0.95, "✍️ Synthesizing final report...")
-            # Use await directly
-            final_report_content = await synthesize_report(
-                chemical_identifier=identifier,
-                specialist_outputs=core_specialist_outputs_list,
-                read_across_report=read_across_report,
-                context=original_context,
-                llm_config=current_llm_config
-            )
+            
+            # Clear any previous LLM errors
+            st.session_state["last_llm_error"] = None
+            
+            try:
+                # Use await directly
+                final_report_content = await synthesize_report(
+                    chemical_identifier=identifier,
+                    specialist_outputs=core_specialist_outputs_list,
+                    read_across_report=read_across_report,
+                    context=original_context,
+                    llm_config=current_llm_config
+                )
+            except Exception as e:
+                logger.error(f"Synthesis failed: {e}", exc_info=True)
+                # Store error for UI display
+                st.session_state["last_llm_error"] = str(e)
+                # Fallback: still give the user a consolidated report so UI never shows "not available"
+                final_report_content = (
+                    "## ⚠️ Report Synthesis Fallback\n"
+                    f"**Reason:** {e}\n\n"
+                    "Below is a concatenation of specialist outputs and read‑across so you can proceed:\n\n"
+                    "### Specialist Outputs\n" + "\n\n---\n\n".join(core_specialist_outputs_list) + "\n\n"
+                    "### Read‑Across\n" + (read_across_report or "[No read‑across content]")
+                )
+            
             st.session_state.final_report = final_report_content
 
             # --- Step 6: Generate Comprehensive Log ---
@@ -1218,16 +1296,19 @@ def execute_analysis(identifier: str, search_type: str, context: str, simulator_
 def render_standard_mode():
     """Render the standard O'QT assistant interface"""
     
-    # Determine identifier for download filenames if results exist
-    if st.session_state.analysis_results:
+    # Always render methodology and transparency in sidebar first
+    render_methodology_and_transparency()
+    
+    # Render downloads if we have completed analysis data
+    if (st.session_state.get('final_report') or
+        st.session_state.get('specialist_outputs_dict') or
+        st.session_state.get('comprehensive_log')):
         try:
             identifier_display = st.session_state.comprehensive_log['inputs']['identifier']
         except (KeyError, TypeError):
             identifier_display = st.session_state.input_identifier or "previous_analysis"
         # This function now includes the PDF download button
         render_specialist_downloads(identifier_display)
-        
-    render_methodology_and_transparency()
 
     # --- Header ---
     st.title("🧪 O'QT: The Open QSAR Toolbox AI Assistant") # Updated Title
