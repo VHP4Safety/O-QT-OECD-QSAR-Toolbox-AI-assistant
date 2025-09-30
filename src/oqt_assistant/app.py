@@ -165,7 +165,9 @@ def _on_run_pipeline(config: dict):
         # New Exclusions
         "exclude_adme_tk": config.get("exclude_adme_tk", False),
         "exclude_mammalian_tox": config.get("exclude_mammalian_tox", False),
-        # New Read-Across details (passed via scope for LLM context)
+        # NEW: honor wizard profiler picks
+        "selected_profiler_guids": config.get("selected_profiler_guids", []),
+        # Read-Across details
         "rax_strategy": config.get("rax_strategy", "Hybrid"),
         "rax_similarity_basis": config.get("rax_similarity_basis", "Combined"),
     }

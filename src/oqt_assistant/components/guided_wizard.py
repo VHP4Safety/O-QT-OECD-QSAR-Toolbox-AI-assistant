@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple, List
 import streamlit as st
 
 from oqt_assistant.utils.qsar_api import QSARToolboxAPI, SearchOptions, QSARConnectionError, QSARTimeoutError, QSARResponseError
+from oqt_assistant.utils.data_formatter import format_chemical_data  # NEW
 
 try:
     from oqt_assistant.components.search import REGULATORY_ENDPOINTS
@@ -32,7 +33,7 @@ def run_guided_wizard(*, ping_qsar=None, estimate_llm_cost=None, on_run_pipeline
     _render_stepper_header(wiz["current_step"], wiz["total_steps"], wiz["step_titles"])
 
     if wiz["current_step"] == 1:
-        _step_1_setup_configuration(get_llm_models)
+        _step_1_setup_configuration(get_llm_models, ping_qsar)  # pass ping
     elif wiz["current_step"] == 2:
         _step_2_chemical_identification()
     elif wiz["current_step"] == 3:
@@ -67,7 +68,7 @@ def _init_wizard_state():
                 "include_experimental": True,
                 "include_profiling": True,
                 "selected_simulator_guids": [],
-                "selected_profiler_guids": [],  # NEW
+                "selected_profiler_guids": [],
                 "exclude_adme_tk": False,
                 "exclude_mammalian_tox": False,
                 "prioritize_read_across": True,
@@ -140,7 +141,23 @@ def _validate_step_2(d: Dict[str, Any]) -> Dict[str, str]:
     return errors
 
 
-def _step_1_setup_configuration(get_llm_models):
+def _render_chem_identity_card(basic: Dict[str, Any]) -> None:
+    """Compact identity card for the currently resolved chemical."""
+    if not isinstance(basic, dict):
+        st.info("No identification data available.")
+        return
+    c1, c2, c3 = st.columns([2, 1, 3])
+    with c1:
+        st.markdown(f"**Name:** {basic.get('Name') or basic.get('IUPACName') or 'N/A'}")
+        st.markdown(f"**IUPAC:** {basic.get('IUPACName', 'N/A')}")
+    with c2:
+        st.markdown(f"**CAS:** `{basic.get('Cas', 'N/A')}`")
+        st.markdown(f"**ChemID:** `{basic.get('ChemId', 'N/A')}`")
+    with c3:
+        st.markdown(f"**SMILES:** `{basic.get('Smiles', 'N/A')}`")
+
+
+def _step_1_setup_configuration(get_llm_models, ping_qsar):
     wiz = _get_wiz()
     d = wiz["data"]
 
@@ -153,29 +170,34 @@ def _step_1_setup_configuration(get_llm_models):
     is_llm_ready = llm_config.get("config_complete", False)
 
     st.subheader("Configuration Status (Sidebar)")
-    st.success(f"✅ QSAR Toolbox API URL configured: {qsar_config.get('api_url')}") if is_qsar_ready else st.error("❌ QSAR Toolbox API URL missing.")
-    if is_llm_ready:
-        llm_models = get_llm_models() if callable(get_llm_models) else {}
-        provider = llm_config.get("provider")
-        model_name = llm_config.get("model_name")
-        if provider in llm_models and model_name in llm_models.get(provider, {}):
-            st.success(f"✅ LLM configured: {provider} / {model_name}")
-        else:
-            st.error(f"❌ Selected LLM model ({model_name}) not found for provider ({provider}).")
-            is_llm_ready = False
+    if is_qsar_ready:
+        st.success(f"✅ QSAR Toolbox API URL configured: {qsar_config.get('api_url')}")
     else:
-        st.error("❌ LLM configuration incomplete (e.g., API Key missing).")
+        st.error("❌ QSAR Toolbox API URL missing.")
+
+    llm_models = get_llm_models() if callable(get_llm_models) else {}
+    provider = llm_config.get("provider")
+    model_name = llm_config.get("model_name")
+    if is_llm_ready and provider in llm_models and model_name in llm_models.get(provider, {}):
+        st.success(f"✅ LLM configured: {provider} / {model_name}")
+    else:
+        st.error(f"❌ LLM configuration incomplete (provider/model/key).")
 
     st.subheader("Connection Status")
     connection_status = st.session_state.get("connection_status")
-    is_connected = connection_status is True
-    if is_qsar_ready:
+    colA, colB = st.columns([3, 1])
+    with colA:
         if connection_status is True:
             st.success("✅ Connected to QSAR Toolbox API.")
         elif connection_status is False:
-            st.error("❌ Failed to connect to QSAR Toolbox API. Use 'Check Connection' in the sidebar.")
+            st.error("❌ Failed to connect to QSAR Toolbox API.")
         else:
-            st.warning("⚠️ QSAR connection status pending. Use 'Check Connection' in the sidebar.")
+            st.info("ℹ️ Status pending.")
+    with colB:
+        if st.button("Check Connection", use_container_width=True) and callable(ping_qsar):
+            ok, msg = ping_qsar(qsar_config.get("api_url"))
+            st.session_state.connection_status = bool(ok)
+            (st.success if ok else st.error)(f"{'✅' if ok else '❌'} {msg}")
 
     st.subheader("LLM Parameter Overrides (Optional)")
     st.info("Adjust LLM parameters for this specific run. Leave unchecked to use sidebar settings.")
@@ -184,9 +206,10 @@ def _step_1_setup_configuration(get_llm_models):
     use_tokens_override = st.checkbox("Override Max Output Tokens", value=(d.get("llm_max_tokens_override") is not None), key="wiz_step1_use_tokens_override")
     d["llm_max_tokens_override"] = st.number_input("Max Output Tokens", min_value=512, max_value=32000, value=(d.get("llm_max_tokens_override") or 4096), step=512, key="wiz_step1_tokens_override") if use_tokens_override else None
 
-    can_proceed = is_qsar_ready and is_llm_ready and is_connected
+    can_proceed = is_qsar_ready and is_llm_ready and (st.session_state.get("connection_status") is True)
     if not can_proceed:
-        st.warning("Please resolve all configuration/connection issues before continuing.")
+        st.warning("Resolve configuration/connection issues before continuing.")
+
     _render_nav(back=False, next=can_proceed, next_label="Continue to Chemical Identification →")
 
 
@@ -208,7 +231,7 @@ def _perform_chemical_search(identifier: str, search_type: str):
     wiz["search_results"] = []
     try:
         with st.spinner("Searching for chemical..."):
-            if search_type == "name":
+            if search_type in ("name", "cas"):
                 if hasattr(api_client.search_by_name, "cache_clear"):
                     api_client.search_by_name.cache_clear()
                 search_result = api_client.search_by_name(identifier, search_option=SearchOptions.EXACT_MATCH)
@@ -217,10 +240,12 @@ def _perform_chemical_search(identifier: str, search_type: str):
         if search_result:
             if isinstance(search_result, dict):
                 search_result = [search_result]
-            wiz["search_results"] = search_result
-            if len(search_result) == 1:
+            # Normalize & enrich (fixes Unknown names + CAS hyphenation)
+            formatted = [format_chemical_data(r) for r in search_result]
+            wiz["search_results"] = formatted
+            if len(formatted) == 1:
                 wiz["data"]["chemical_resolved"] = True
-                wiz["data"]["resolved_chemical_data"] = search_result[0]
+                wiz["data"]["resolved_chemical_data"] = formatted[0]
         else:
             st.warning("No exact match found. Try refining the identifier.")
     except (QSARConnectionError, QSARTimeoutError, QSARResponseError) as e:
@@ -233,18 +258,23 @@ def _display_search_results():
     if not results or len(results) <= 1:
         return
     st.subheader(f"Found {len(results)} matches. Please select one:")
+
     options = {}
     for i, chem in enumerate(results):
-        name = chem.get("Name") or chem.get("IUPACName") or "Unknown"
+        name = chem.get("Name") or chem.get("IUPACName") or f"ChemID {chem.get('ChemId', 'N/A')}"
         cas = chem.get("Cas") or "N/A"
-        label = f"{name} (CAS: {cas})"
+        smi = chem.get("Smiles") or ""
+        label = f"{name}  •  CAS {cas}{('  •  ' + smi) if smi else ''}"
         options[label] = i
+
     selected_label = st.radio("Select the correct chemical:", list(options.keys()), key="wiz_step2_selection")
     if selected_label:
         selected_index = options[selected_label]
         selected_chemical = results[selected_index]
         wiz["data"]["chemical_resolved"] = True
         wiz["data"]["resolved_chemical_data"] = selected_chemical
+        st.info("Preview of selected chemical:")
+        _render_chem_identity_card(selected_chemical)
 
 
 def _step_2_chemical_identification():
@@ -254,15 +284,15 @@ def _step_2_chemical_identification():
 
     search_type = st.radio(
         "Search By",
-        options=["name", "smiles"],
-        format_func=lambda x: "Chemical Name (Exact)" if x == "name" else "SMILES Notation",
-        index=["name", "smiles"].index(d.get("search_type", "name")),
+        options=["name", "smiles", "cas"],
+        format_func=lambda x: {"name": "Chemical Name (Exact)", "smiles": "SMILES Notation", "cas": "CAS Number"}[x],
+        index=["name", "smiles", "cas"].index(d.get("search_type", "name")),
         horizontal=True,
         key="wiz_step2_search_type",
     )
     d["search_type"] = st.session_state.wiz_step2_search_type
 
-    identifier = st.text_input("Identifier", value=d.get("chemical_identifier", ""), placeholder="e.g., chlorpyrifos or a SMILES")
+    identifier = st.text_input("Identifier", value=d.get("chemical_identifier", ""), placeholder="e.g., retinol or 68-26-8 or a SMILES")
     d["chemical_identifier"] = identifier
 
     if errs.get("chemical_identifier"):
@@ -278,9 +308,9 @@ def _step_2_chemical_identification():
     _display_search_results()
 
     if d.get("chemical_resolved"):
-        chem_data = d.get("resolved_chemical_data", {})
-        chem_name = chem_data.get("Name") or chem_data.get("IUPACName") or "N/A"
-        st.success(f"✅ Chemical Confirmed: {chem_name} (CAS: {chem_data.get('Cas', 'N/A')})")
+        chem_data = d.get("resolved_chemical_data", {}) or {}
+        st.success("✅ Chemical Confirmed")
+        _render_chem_identity_card(chem_data)
 
     if errs.get("chemical_resolved"):
         st.error(errs["chemical_resolved"])
@@ -350,7 +380,6 @@ def _step_4_scope_methodology():
             st.warning("No metabolism simulators available. Ensure QSAR Toolbox connection is active.")
             selected_sim_guids = []
 
-        # NEW: Profiler selection
         st.subheader("Profiler Selection (Optional)")
         available_profilers = st.session_state.get("available_profilers", [])
         if available_profilers:
@@ -419,9 +448,11 @@ def _step_6_review_and_run(on_run_pipeline):
     st.info("Review the analysis plan. If correct, click 'Run Analysis'.")
 
     st.subheader("Analysis Plan Summary")
-    chem_data = d.get("resolved_chemical_data", {})
-    chem_name = chem_data.get("Name") or chem_data.get("IUPACName") or "N/A"
-    st.markdown(f"**Target Chemical:** {chem_name} (CAS: {chem_data.get('Cas', 'N/A')})")
+    chem_raw = d.get("resolved_chemical_data", {}) or {}
+    chem_data = chem_raw if chem_raw.get("ChemId") else format_chemical_data(chem_raw)
+    st.markdown("**Target Chemical:**")
+    _render_chem_identity_card(chem_data)
+
     st.markdown(f"**Case Label:** {d.get('case_label') or 'N/A'}")
     st.markdown(f"**Analysis Focus:** {d.get('analysis_focus') or 'General hazard assessment'}")
     endpoints = d.get("endpoints_of_interest")
@@ -485,7 +516,7 @@ def _step_6_review_and_run(on_run_pipeline):
             "search_type": d["search_type"],
             "context": final_context,
             "simulator_guids": d["selected_simulator_guids"],
-            "selected_profiler_guids": d["selected_profiler_guids"],  # NEW
+            "selected_profiler_guids": d["selected_profiler_guids"],
             "include_properties": d["include_properties"],
             "include_experimental": d["include_experimental"],
             "include_profiling": d["include_profiling"],
@@ -495,7 +526,7 @@ def _step_6_review_and_run(on_run_pipeline):
             "rax_similarity_basis": d.get("rax_similarity_basis"),
             "llm_temperature_override": d.get("llm_temperature_override"),
             "llm_max_tokens_override": d.get("llm_max_tokens_override"),
-            "resolved_chemical_data": d["resolved_chemical_data"],
+            "resolved_chemical_data": chem_data,
             "case_label": d["case_label"],
         }
         try:
