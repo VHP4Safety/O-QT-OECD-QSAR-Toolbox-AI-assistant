@@ -335,16 +335,16 @@ def _step_2_chemical_identification():
         chem_data = d.get("resolved_chemical_data", {}) or {}
         st.success("✅ Chemical Confirmed")
         _render_chem_identity_card(chem_data)
-
-    smiles = chem_data.get("Smiles") or ""
-    with st.expander("3D Preview", expanded=True):
-        if smiles:
-            try:
-                render_smiles_3d(smiles, height=240, width=0) # width=0 lets Streamlit size it
-            except Exception as e:
-                st.warning(f"3D preview unavailable: {e}")
-        else:
-            st.caption("No SMILES available for this record.")
+        
+        smiles = chem_data.get("Smiles") or ""
+        with st.expander("3D Preview", expanded=True):
+            if smiles:
+                try:
+                    render_smiles_3d(smiles, height=240, width=0) # width=0 lets Streamlit size it
+                except Exception as e:
+                    st.warning(f"3D preview unavailable: {e}")
+            else:
+                st.caption("No SMILES available for this record.")
 
     if errs.get("chemical_resolved"):
         st.error(errs["chemical_resolved"])
