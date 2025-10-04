@@ -126,11 +126,11 @@ def _render_nav(back: bool = True, next: bool = True, next_label="Next →", bac
     st.markdown("---")
     c1, _, c3 = st.columns([2, 6, 2])
     with c1:
-        if back and st.button("← Back", key=f"wiz_nav_back_{_get_wiz()['current_step']}", use_container_width=True):
+        if back and st.button("← Back", key=f"wiz_nav_back_{_get_wiz()['current_step']}", width="stretch"):
             _goto_step(back_step or (_get_wiz()["current_step"] - 1))
             st.rerun()
     with c3:
-        if next and st.button(next_label, type="primary", key=f"wiz_nav_next_{_get_wiz()['current_step']}", use_container_width=True):
+        if next and st.button(next_label, type="primary", key=f"wiz_nav_next_{_get_wiz()['current_step']}", width="stretch"):
             _goto_step(_get_wiz()["current_step"] + 1)
             st.rerun()
 
@@ -197,7 +197,7 @@ def _step_1_setup_configuration(get_llm_models, ping_qsar):
         else:
             st.info("ℹ️ Status pending.")
     with colB:
-        if st.button("Check Connection", use_container_width=True) and callable(ping_qsar):
+        if st.button("Check Connection", width="stretch") and callable(ping_qsar):
             ok, msg = ping_qsar(qsar_config.get("api_url"))
             st.session_state.connection_status = bool(ok)
             (st.success if ok else st.error)(f"{'✅' if ok else '❌'} {msg}")
@@ -350,7 +350,7 @@ def _step_2_chemical_identification():
         st.error(errs["chemical_resolved"])
 
     with st.form(key="wiz_step2_nav_form"):
-        submitted = st.form_submit_button("Next: Context & Goals →", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Next: Context & Goals →", type="primary", width="stretch")
     if submitted:
         errors = _validate_step_2(d)
         if errors:
@@ -374,7 +374,7 @@ def _step_3_analysis_context():
         )
         st.markdown("**Regulatory Endpoints of Interest (Optional)**")
         selected_endpoints = st.multiselect("Select endpoints:", options=REGULATORY_ENDPOINTS, default=d.get("endpoints_of_interest", []))
-        submitted = st.form_submit_button("Next: Scope & Methods →", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Next: Scope & Methods →", type="primary", width="stretch")
     if submitted:
         d["case_label"] = case_label.strip()
         d["analysis_focus"] = analysis_focus.strip()
@@ -430,7 +430,7 @@ def _step_4_scope_methodology():
             st.info("Profiler catalog not available yet (connect in sidebar), defaults will be used.")
             selected_prof_guids = []
 
-        submitted = st.form_submit_button("Next: Read-Across →", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Next: Read-Across →", type="primary", width="stretch")
 
     if submitted:
         d["include_properties"] = include_properties
@@ -466,7 +466,7 @@ def _step_5_read_across_strategy():
         else:
             rax_strategy = None
             rax_similarity_basis = None
-        submitted = st.form_submit_button("Next: Review & Run →", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Next: Review & Run →", type="primary", width="stretch")
     if submitted:
         d["prioritize_read_across"] = prioritize_read_across
         d["rax_strategy"] = rax_strategy
@@ -533,7 +533,7 @@ def _step_6_review_and_run(on_run_pipeline):
         st.markdown(f"**LLM Max Tokens (Override):** {d.get('llm_max_tokens_override')}")
 
     st.markdown("---")
-    run_clicked = st.button("🚀 Run Analysis", type="primary", use_container_width=True, key="wiz_step6_run")
+    run_clicked = st.button("🚀 Run Analysis", type="primary", width="stretch", key="wiz_step6_run")
 
     if run_clicked and callable(on_run_pipeline):
         context_parts = []

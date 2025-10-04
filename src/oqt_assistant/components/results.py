@@ -20,6 +20,27 @@ except ImportError:
     def safe_json(data):
         return json.dumps(data, indent=2, default=str)
 
+# NEW: Import 3D rendering utility
+from oqt_assistant.utils.structure_3d import render_smiles_3d
+
+def _render_static_depiction(smiles: str, width: int = 520, height: int = 360):
+    """Render static 2D molecular depiction using RDKit."""
+    import streamlit as st
+    import io
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Draw
+        mol = Chem.MolFromSmiles(smiles) if smiles else None
+        if mol:
+            img = Draw.MolToImage(mol, size=(width, height))
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            st.image(buf.getvalue(), caption="2D depiction (fallback)")
+            # Store PNG for PDF use (picked up by pdf generator later if you wire it)
+            st.session_state['oqt_static_depiction_png'] = buf.getvalue()
+    except Exception:
+        pass
+
 def render_results_section(results: Dict[str, Any], identifier: str):
     """Render the results section with tabs for different data types."""
     st.header(f"Analysis Results for: {identifier}")
@@ -66,6 +87,41 @@ def _render_chemical_info(chemical_data: Dict[str, Any]):
         st.markdown(f"**IUPAC Name:** {basic_info.get('IUPACName', 'N/A')}")
         st.markdown(f"**ChemID (Toolbox Internal):** {basic_info.get('ChemId', 'N/A')}")
         
+        # NEW: Display IUCLID IDs if available (QPRF §2.3)
+        iuclid_data = basic_info.get('iuclid', {})
+        if iuclid_data and iuclid_data.get('entity_ids'):
+            st.markdown("---")
+            st.markdown("**🔗 IUCLID Regulatory Identifiers (QPRF §2.3)**")
+            for entity in iuclid_data['entity_ids']:
+                entity_id = entity.get('entity_id', 'N/A')
+                entity_name = entity.get('name', 'N/A')
+                echa_url = iuclid_data.get('echa_url', '')
+                
+                if echa_url:
+                    st.markdown(f"- **IUCLID ID:** [{entity_id}]({echa_url}) - {entity_name}")
+                else:
+                    st.markdown(f"- **IUCLID ID:** {entity_id} - {entity_name}")
+        
+        # NEW: Display canonical SMILES and connectivity if available (QPRF §5.1)
+        if basic_info.get('canonical_smiles'):
+            with st.expander("📋 Normalized Structure (QPRF §5.1)"):
+                st.markdown(f"**Canonical SMILES:** `{basic_info.get('canonical_smiles')}`")
+                if basic_info.get('connectivity'):
+                    st.markdown(f"**Connectivity:** `{basic_info.get('connectivity')}`")
+                if basic_info.get('stereochemistry_note'):
+                    st.info(basic_info.get('stereochemistry_note'))
+        
+        # --- New: 3D viewer with graceful fallback ---
+        with st.expander("3D Preview (optional)"):
+            smiles = basic_info.get('Smiles') or ""
+            if smiles:
+                try:
+                    render_smiles_3d(smiles)
+                except Exception as e:
+                    st.warning(f"3D preview unavailable: {e}")
+            else:
+                st.info("SMILES not available for this record.")
+        
         with st.expander("View Full Identification JSON"):
             st.json(basic_info)
     else:
@@ -108,14 +164,14 @@ def _render_properties(properties: Dict[str, Any] | List[Dict[str, Any]]):
         else:
             raise ValueError(f"Unexpected properties data format: {type(properties)}")
         
-        st.dataframe(df_props, use_container_width=True, hide_index=True)
+        st.dataframe(df_props, width="stretch", hide_index=True)
     except Exception as e:
         st.warning(f"Could not format properties data: {e}")
         st.json(properties)
 
-# UPDATED: Enhanced experimental data rendering using interactive dataframe
+# UPDATED: Enhanced experimental data rendering with metadata columns and filters
 def _render_experimental_data_interactive(experimental_data: List[Dict[str, Any]]):
-    """Render experimental data in an interactive table with sorting and selection."""
+    """Render experimental data in an interactive table with metadata columns, filters, and selection."""
     
     # Filter out system notes (like truncation messages) from the main data display
     actual_data_records = [r for r in experimental_data if isinstance(r, dict) and r.get('DataType') != 'SystemNote']
@@ -130,106 +186,95 @@ def _render_experimental_data_interactive(experimental_data: List[Dict[str, Any]
     try:
         df = pd.DataFrame(actual_data_records)
 
-        # Define desired columns and their order
-        # 'Publication_Year' is added by data_formatter.py
-        columns_to_display_map = {
-            'Publication_Year': 'Year',
-            'Endpoint': 'Endpoint',
-            'Value': 'Value',
-            'Unit': 'Unit',
-            'DataType': 'Type',
-            'Reliability': 'Reliability',
-            'Reference': 'Reference',
-            # We keep Parsed_Metadata internally for the detail view, but hide it in the main table
-            'Parsed_Metadata': 'Parsed_Metadata' 
-        }
-        
-        # Filter columns that actually exist in the DataFrame
-        existing_columns = [col for col in columns_to_display_map.keys() if col in df.columns]
-        
-        df_display = df[existing_columns].copy()
-        
-        # Rename columns for display
-        df_display.rename(columns=columns_to_display_map, inplace=True)
+        # Build a friendlier endpoint column
+        def _endpoint_from_row(r):
+            v = r.get('Endpoint')
+            if v in (None, "", "n/a", "N/A"):
+                v = r.get('Family') or None
+            if not v:
+                pm = r.get('Parsed_Metadata') or {}
+                if isinstance(pm, dict):
+                    v = pm.get('Effect') or pm.get('Measurement') or pm.get('Endpoint') or None
+            return v or "—"
 
+        df['Endpoint_Display'] = [ _endpoint_from_row(rec) for rec in actual_data_records ]
+
+        # Columns to show (Parsed_Metadata is hidden but available for the details panel)
+        columns_to_display_map = {
+            "Publication_Year": "Year",
+            "Endpoint_Display": "Endpoint",   # ⬅ new
+            "Value": "Value",
+            "Unit": "Unit",
+            "DataType": "Type",
+            "Reliability": "Reliability",
+            "Reference": "Reference",
+            "Parsed_Metadata": "Parsed_Metadata",
+        }
+
+        existing = [c for c in columns_to_display_map.keys() if c in df.columns]
+        df_display = df[existing].copy()
+
+        # Safe (non‑inplace) rename and null‑to‑blank sanitization for the UI
+        df_display = df_display.rename(columns=columns_to_display_map, errors="ignore")
+        
         # Handle the 'Year' column for proper sorting
         if 'Year' in df_display.columns:
-            # Convert 'Year' to nullable integer type (Pandas >= 1.0.0)
             try:
-                # Use Int64 (capital I) to handle potential None/NaN values gracefully
-                df_display['Year'] = df_display['Year'].astype('Int64')
-            except TypeError:
-                # Fallback if conversion fails (e.g., non-numeric strings slipped through)
+                # Normalize empties before conversion
+                df_display['Year'] = df_display['Year'].replace({"": None, "N/A": None, "n/a": None})
+                df_display['Year'] = pd.to_numeric(df_display['Year'], errors='coerce').astype('Int64')
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Year column conversion failed: {e}")
                 df_display['Year'] = pd.to_numeric(df_display['Year'], errors='coerce')
-
-            # NEW: Default Sorting (by Year descending, then Endpoint)
             try:
-                # Sort by Year (descending) and Endpoint (ascending). Missing years (NaN/NaT) are placed last.
-                df_display.sort_values(by=['Year', 'Endpoint'], ascending=[False, True], inplace=True, na_position='last')
+                df_display.sort_values(by=['Year', 'Endpoint'], ascending=[False, True],
+                                       inplace=True, na_position='last')
             except Exception as e:
                 st.warning(f"Could not apply default sorting: {e}")
                 logger.warning(f"Sorting failed: {e}. DataFrame dtypes: {df_display.dtypes}")
 
+        # Fill NaN values with empty strings for all columns EXCEPT 'Year' (which uses Int64 and needs to keep NaN)
+        for col in df_display.columns:
+            if col != 'Year':
+                df_display[col] = df_display[col].fillna("")
+
     except Exception as e:
         st.error(f"Error preparing data table: {e}")
-        st.json(experimental_data) # Fallback to raw JSON
+        st.json(experimental_data)
         return
 
     # --- Display Table (Interactive) ---
-    st.info("Data sorted by Year (Newest first). Click on a row to view detailed study metadata below.")
+    st.info("Data sorted by Year (newest first). Click a row to view detailed study metadata below.")
 
-    # Define column configurations (Hiding Parsed_Metadata)
     column_config = {}
-    # Identify the actual name used for Parsed_Metadata in df_display after renaming
-    metadata_display_name = columns_to_display_map.get('Parsed_Metadata', 'Parsed_Metadata')
+    if "Parsed_Metadata" in df_display.columns:
+        column_config["Parsed_Metadata"] = None  # hide from the grid; used for details
 
-    if metadata_display_name in df_display.columns:
-        # Hide this column from the main table view
-        column_config[metadata_display_name] = None 
-
-    # Use st.dataframe with on_select for direct row interaction
     selection = st.dataframe(
         df_display,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
-        on_select="rerun", # Rerun the app when a row is selected
+        on_select="rerun",
         selection_mode="single-row",
         column_config=column_config
     )
 
-    # --- Metadata Details View ---
     st.subheader("Study Metadata Details")
-    
-    selected_rows = selection.get("selection", {}).get("rows")
-    
-    if selected_rows:
-        # Get the positional index of the selected row in the displayed (sorted) data
-        selected_positional_index = selected_rows[0]
-        
-        try:
-            # Retrieve the metadata directly from df_display using the positional index.
-            # We must use iloc because the index might be non-sequential after sorting.
-            selected_row_data = df_display.iloc[selected_positional_index]
-
-            if metadata_display_name in df_display.columns:
-                metadata = selected_row_data.get(metadata_display_name)
-                
-                # Check if metadata is a valid dictionary (Pandas might convert empty dicts to NaN)
-                if metadata and isinstance(metadata, dict) and metadata:
-                    # Display metadata using st.json for a clean, collapsible view of the structured data
-                    st.json(metadata)
-                else:
-                    st.warning("No structured metadata available for the selected record (parsing might have failed).")
+    try:
+        # Streamlit returns a dict‑like selection object in recent versions. Be defensive:
+        sel_rows = getattr(selection, "get", lambda *_: {})("selection", {}).get("rows")
+        if sel_rows:
+            pos = sel_rows[0]
+            row = df_display.iloc[pos]
+            meta = row.get("Parsed_Metadata", {})
+            if isinstance(meta, dict) and meta:
+                st.json(meta)
             else:
-                    st.error("Metadata column not found in the data structure.")
-
-        except IndexError:
-            st.error("Selected index is out of bounds. Please try selecting again.")
-        except Exception as e:
-            st.error(f"Error retrieving metadata details: {e}")
-
-    else:
-        st.info("Select a record above to see details.")
+                st.warning("No structured metadata available for the selected record.")
+        else:
+            st.info("Select a record above to see details.")
+    except Exception as e:
+        st.warning(f"Could not display metadata details: {e}")
 
 
 def _render_profiling_data(profiling_data: Dict[str, Any]):
@@ -260,7 +305,7 @@ def _render_profiling_data(profiling_data: Dict[str, Any]):
                 df_av = pd.DataFrame(available)[["name", "type", "guid", "status"]]
             except Exception:
                 df_av = pd.DataFrame(available)
-            st.dataframe(df_av, use_container_width=True, hide_index=True)
+            st.dataframe(df_av, width="stretch", hide_index=True)
 
     # Actual results (per profiler)
     results = profiling_data.get("results", {})
@@ -279,7 +324,7 @@ def _render_profiling_data(profiling_data: Dict[str, Any]):
                     df = pd.DataFrame(payload)
                     # Select common columns if present
                     preferred = [c for c in ["Alert", "Category", "Explanation", "SubstanceCategory", "Endpoint"] if c in df.columns]
-                    st.dataframe(df[preferred] if preferred else df, use_container_width=True, hide_index=True)
+                    st.dataframe(df[preferred] if preferred else df, width="stretch", hide_index=True)
                 except Exception as e:
                     st.warning(f"Could not display table for {profiler_name}: {e}")
                     st.json(payload)
@@ -330,9 +375,9 @@ def _render_metabolism_data(metabolism_data: Dict[str, Any]):
                         available_cols = [col for col in desired_cols if col in metabolites_df.columns]
                         
                         if available_cols:
-                                st.dataframe(metabolites_df[available_cols], use_container_width=True, hide_index=True)
+                                st.dataframe(metabolites_df[available_cols], width="stretch", hide_index=True)
                         else:
-                            st.dataframe(metabolites_df, use_container_width=True, hide_index=True)
+                            st.dataframe(metabolites_df, width="stretch", hide_index=True)
                     
                     except Exception as e:
                         st.warning(f"Could not display metabolites for {sim_name} in table format: {e}")

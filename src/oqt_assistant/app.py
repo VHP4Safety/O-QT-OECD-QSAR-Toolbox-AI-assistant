@@ -59,6 +59,7 @@ from oqt_assistant.components.results import render_results_section, render_down
 
 # NEW IMPORT
 from oqt_assistant.utils.pdf_generator import generate_pdf_report
+from oqt_assistant.utils.qprf_enrichment import QPRFEnricher
 from oqt_assistant.components.guided_wizard import run_guided_wizard
 # Import data formatter and filters needed in execute_analysis
 # UPDATED IMPORT: Added format_chemical_data
@@ -105,6 +106,13 @@ LLM_MODELS = {
         "Anthropic Claude 3.5 Sonnet": {"cost_input": 3.00, "cost_output": 15.00, "id": "anthropic/claude-3.5-sonnet"},
         "Google Gemini 1.5 Flash": {"cost_input": 0.35, "cost_output": 1.05, "id": "google/gemini-flash-1.5"},
         "Meta Llama 3 70B Instruct": {"cost_input": 0.59, "cost_output": 0.79, "id": "meta-llama/llama-3-70b-instruct"},
+    },
+    "HuggingFace": {
+        # Free/serverless via HF Inference API (rate-limited on free tier)
+        "Mistral 7B Instruct (HF)":   {"cost_input": 0.00, "cost_output": 0.00, "id": "mistralai/Mistral-7B-Instruct-v0.2"},
+        "Mixtral 8x7B Instruct (HF)": {"cost_input": 0.00, "cost_output": 0.00, "id": "mistralai/Mixtral-8x7B-Instruct-v0.1"},
+        "Qwen2.5 7B Instruct (HF)":   {"cost_input": 0.00, "cost_output": 0.00, "id": "Qwen/Qwen2.5-7B-Instruct"},
+        "Qwen2.5 14B Instruct (HF)":  {"cost_input": 0.00, "cost_output": 0.00, "id": "Qwen/Qwen2.5-14B-Instruct"},
     }
 }
 
@@ -676,6 +684,29 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             update_progress(0.4, "📊 Skipping chemical properties (per configuration)...")
 
 
+        
+        # --- QPRF/RAAF Metadata Enrichment (NEW) ---
+        update_progress(0.38, "📋 Enriching with QPRF/RAAF metadata...")
+        try:
+            enricher = QPRFEnricher(api_client)
+            
+            # Enrich substance identity (includes IUCLID lookup)
+            enriched_chemical = enricher.enrich_substance_identity(chemical_data)
+            chemical_data = enriched_chemical
+            
+            # Enrich calculator results with model metadata
+            if properties:
+                enriched_props = enricher.enrich_calculator_results(properties)
+                properties = enriched_props
+            
+            # Store software info for later use
+            software_info = enricher.get_software_info()
+            
+        except Exception as e:
+            logger.warning(f"QPRF enrichment failed (non-critical): {e}")
+            software_info = {}
+
+        
         # --- Experimental Data Retrieval (Conditional based on scope_config) ---
         experimental_data = []
         if scope_config.get("include_experimental"):
@@ -719,10 +750,14 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
                 'basic_info': chemical_data,
                 'properties': properties
             },
-            'experimental_data': experimental_data, # This is the FULL experimental_data for UI/Download
+            'experimental_data': experimental_data,
             'profiling': profiling_data,
-            'metabolism': metabolism_data, # UPDATED: Add structured multi-simulation data
-            'context': context # Pass context along
+            'metabolism': metabolism_data,
+            'context': context,
+            'qprf_metadata': {  # NEW: QPRF enrichment data
+                'software': software_info,
+                'enrichment_applied': True
+            }
         }
         return results
 
@@ -1375,7 +1410,7 @@ def render_standard_mode():
         st.warning("Connect to QSAR Toolbox to enable profiler selection.")
 
     # Analyze Button placed prominently after inputs
-    analyze_button_clicked = st.button("🚀 Analyze Chemical", type="primary", use_container_width=True)
+    analyze_button_clicked = st.button("🚀 Analyze Chemical", type="primary", width="stretch")
 
     # Store inputs in session state for persistence
     st.session_state.input_identifier = identifier
@@ -1423,6 +1458,8 @@ def render_standard_mode():
                     "selected_profiler_guids": st.session_state.get('selected_profiler_guids', [])
                 }
             )
+            # Force rerun to display results and downloads
+            st.rerun()
 
     # Display results (if they exist, either from current run or previous session)
     if st.session_state.analysis_results is not None:
@@ -1452,7 +1489,7 @@ def main():
 
     # Display the logo at the top of the sidebar
     if os.path.exists("logo.png"):
-        st.sidebar.image("logo.png", use_container_width=True)
+        st.sidebar.image("logo.png", width="stretch")
 
     # --- Sidebar Configuration and Information ---
     render_configuration_ui()

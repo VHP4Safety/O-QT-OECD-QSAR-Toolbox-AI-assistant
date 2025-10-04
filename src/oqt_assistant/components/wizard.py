@@ -56,11 +56,11 @@ def _nav(prev_enabled=True, next_enabled=True, next_label="Next", prev_label="Ba
     cols = st.columns([1,1,6,1,1])
     moved = False
     with cols[1]:
-        if st.button(prev_label, use_container_width=True, disabled=not prev_enabled):
+        if st.button(prev_label, width="stretch", disabled=not prev_enabled):
             st.session_state[WIZ_KEY].current_step = max(0, st.session_state[WIZ_KEY].current_step - 1)
             moved = True
     with cols[3]:
-        if st.button(next_label, use_container_width=True, disabled=not next_enabled):
+        if st.button(next_label, width="stretch", disabled=not next_enabled):
             st.session_state[WIZ_KEY].current_step = st.session_state[WIZ_KEY].current_step + 1
             moved = True
     return moved
@@ -294,7 +294,7 @@ def render():
     else:
         _header(5, total)
         st.subheader("Running Analysis")
-        run_btn = st.button("Run now", type="primary", use_container_width=True)
+        run_btn = st.button("Run now", type="primary", width="stretch")
 
         if run_btn:
             # 1) Retrieve data
