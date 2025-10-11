@@ -4,17 +4,18 @@ import asyncio
 import json
 import os
 import textwrap
+import logging
 from typing import Dict, Any, Optional, List, Tuple
 
 import streamlit as st
 
 from oqt_assistant.utils.wizard_state import WizardState, READ_ACROSS_DEFINITION
 from oqt_assistant.utils.filters import filter_experimental_records
-from oqt_assistant.utils.data_formatter import clean_response_data
-from oqt_assistant.utils import data_formatter
+from oqt_assistant.utils.data_formatter import clean_response_data, format_chemical_data
+from oqt_assistant.utils.hit_selection import rank_hits_by_quality, select_hit_with_properties
 
 # Your API + Agents
-from oqt_assistant.utils.qsar_api import QSARToolboxAPI
+from oqt_assistant.utils.qsar_api import QSARToolboxAPI, SearchOptions
 from oqt_assistant.utils.llm_utils import (
     analyze_chemical_context, analyze_physical_properties,
     analyze_environmental_fate, analyze_profiling_reactivity,
@@ -34,6 +35,8 @@ DEFAULT_ENDPOINTS = [
     "Genotoxicity/Mutagenicity", "Carcinogenicity", "Reproductive/Developmental Toxicity",
     "Neurotoxicity", "Endocrine Disruption", "Skin/Eye Irritation/Corrosion", "Sensitization"
 ]
+
+logger = logging.getLogger(__name__)
 
 def _init_state() -> WizardState:
     if WIZ_KEY not in st.session_state:
@@ -193,33 +196,102 @@ def render():
         wiz.chemical.search_type = st.radio("Search by", ["name", "smiles", "cas"], index=["name","smiles","cas"].index(wiz.chemical.search_type), horizontal=True)
         wiz.chemical.identifier = st.text_input("Identifier", value=wiz.chemical.identifier, placeholder="e.g., Chlorpyrifos or a SMILES string")
 
-        chosen = None
+        # Initialize transient storage for search results
+        if not hasattr(wiz.chemical, "available_hits"):
+            wiz.chemical.available_hits = []
+        if not hasattr(wiz.chemical, "formatted_hits"):
+            wiz.chemical.formatted_hits = []
+        if not hasattr(wiz.chemical, "selection_notes"):
+            wiz.chemical.selection_notes = []
+
         if st.button("Search and Resolve"):
             api = QSARToolboxAPI(base_url=wiz.setup.api_url)
             try:
                 if wiz.chemical.search_type == "name":
-                    hits = api.search_by_name(wiz.chemical.identifier)
+                    hits = api.search_by_name(wiz.chemical.identifier, search_option=SearchOptions.EXACT_MATCH)
                 elif wiz.chemical.search_type == "smiles":
                     hits = api.search_by_smiles(wiz.chemical.identifier)
                 else:  # cas
                     # some installs accept name search for CAS too
-                    hits = api.search_by_name(wiz.chemical.identifier)
+                    hits = api.search_by_name(wiz.chemical.identifier, search_option=SearchOptions.EXACT_MATCH)
 
                 if not hits:
                     st.warning("No matches found.")
                 else:
-                    options = [(h.get("id") or h.get("ID") or str(i), f"{h.get('name') or h.get('Name') or 'Unknown'}  •  {h.get('cas') or h.get('CAS') or ''}") for i,h in enumerate(hits)]
-                    labels = [o[1] for o in options]
-                    idx = st.selectbox("Pick the intended chemical", range(len(labels)), format_func=lambda i: labels[i])
-                    chosen = options[idx][0]
+                    hits = hits if isinstance(hits, list) else [hits]
+                    ranked_hits = rank_hits_by_quality(wiz.chemical.identifier, hits)
+                    wiz.chemical.available_hits = ranked_hits
+                    wiz.chemical.formatted_hits = [format_chemical_data(h) for h in ranked_hits]
+                    wiz.chemical.selection_notes = []
+                    wiz.chemical.resolved = False
+                    wiz.chemical.selected_chemical_id = None
+
+                    try:
+                        best_basic, _, chem_id, notes = select_hit_with_properties(
+                            api, wiz.chemical.identifier, ranked_hits, logger=logger
+                        )
+                        wiz.chemical.selection_notes = notes
+                        if len(wiz.chemical.formatted_hits) == 1:
+                            wiz.chemical.selected_chemical_id = chem_id
+                            wiz.chemical.selected_display_name = best_basic.get("Name") or wiz.chemical.identifier
+                            wiz.chemical.resolved = True
+                            st.success("Chemical automatically resolved to a validated QSAR Toolbox record.")
+                        else:
+                            st.info("Multiple matches found. Please confirm the intended entry below.")
+                    except RuntimeError as exc:
+                        st.warning(f"Matches were found, but none completed Toolbox calculator validation: {exc}")
             except Exception as e:
                 st.error(f"Search failed: {e}")
 
-        if chosen:
-            wiz.chemical.selected_chemical_id = str(chosen)
-            wiz.chemical.selected_display_name = wiz.chemical.identifier
-            wiz.chemical.resolved = True
-            st.success("Chemical resolved.")
+        formatted_hits = getattr(wiz.chemical, "formatted_hits", [])
+        raw_hits = getattr(wiz.chemical, "available_hits", [])
+        if formatted_hits:
+            labels = []
+            for idx, chem in enumerate(formatted_hits):
+                name = chem.get("Name") or chem.get("IUPACName") or chem.get("ChemId") or "Unknown"
+                cas = chem.get("Cas") or ""
+                prefix = "⭐ " if idx == 0 else ""
+                label = f"{prefix}{name}"
+                if cas:
+                    label += f" • CAS {cas}"
+                labels.append(label)
+
+            selected_idx = st.selectbox(
+                "Pick the intended chemical",
+                range(len(labels)),
+                format_func=lambda i: labels[i],
+                key="wizard_hit_select"
+            )
+
+            if st.button("Confirm selection", key="wizard_confirm_selection"):
+                api = QSARToolboxAPI(base_url=wiz.setup.api_url)
+                prioritized_hits = []
+                if raw_hits and 0 <= selected_idx < len(raw_hits):
+                    prioritized_hits.append(raw_hits[selected_idx])
+                    prioritized_hits.extend(h for j, h in enumerate(raw_hits) if j != selected_idx)
+                else:
+                    prioritized_hits = raw_hits or []
+                if not prioritized_hits:
+                    st.warning("No search results to confirm.")
+                else:
+                    try:
+                        basic, _, chem_id, notes = select_hit_with_properties(
+                            api, wiz.chemical.identifier, prioritized_hits, logger=logger
+                        )
+                        wiz.chemical.selected_chemical_id = chem_id
+                        wiz.chemical.selected_display_name = basic.get("Name") or wiz.chemical.identifier
+                        wiz.chemical.resolved = True
+                        wiz.chemical.selection_notes = notes
+                        st.success("Chemical resolved.")
+                    except RuntimeError as exc:
+                        st.error(f"Unable to validate the selected entry: {exc}")
+                    except Exception as exc:
+                        st.error(f"Validation failed: {exc}")
+
+            if getattr(wiz.chemical, "selection_notes", []):
+                st.caption("Validation notes: " + " | ".join(wiz.chemical.selection_notes))
+        else:
+            st.info("Run a search to resolve the chemical.")
 
         _nav(prev_enabled=True, next_enabled=wiz.chemical.resolved)
 
@@ -299,8 +371,39 @@ def render():
         if run_btn:
             # 1) Retrieve data
             api = QSARToolboxAPI(base_url=wiz.setup.api_url)
+            identifier = wiz.chemical.identifier or wiz.chemical.selected_display_name
+            if not identifier:
+                st.error("Chemical identifier is missing. Please resolve the chemical before running the analysis.")
+                return
             try:
-                # Minimal non-breaking path: fetch everything, then filter according to scope
+                if wiz.chemical.search_type == "name":
+                    hits = api.search_by_name(identifier, search_option=SearchOptions.EXACT_MATCH)
+                elif wiz.chemical.search_type == "smiles":
+                    hits = api.search_by_smiles(identifier)
+                else:
+                    hits = api.search_by_name(identifier, search_option=SearchOptions.EXACT_MATCH)
+
+                hits = hits if isinstance(hits, list) else ([hits] if hits else [])
+                if not hits:
+                    st.error("No QSAR Toolbox entry found for the specified identifier.")
+                    return
+
+                ranked_hits = rank_hits_by_quality(identifier, hits)
+                if wiz.chemical.selected_chemical_id:
+                    preferred = [h for h in ranked_hits if h.get("ChemId") == wiz.chemical.selected_chemical_id]
+                    if preferred:
+                        remaining = [h for h in ranked_hits if h.get("ChemId") != wiz.chemical.selected_chemical_id]
+                        ranked_hits = preferred + remaining
+
+                basic, _, chem_id, notes = select_hit_with_properties(api, identifier, ranked_hits, logger=logger)
+                wiz.chemical.selected_chemical_id = chem_id
+                wiz.chemical.selected_display_name = basic.get("Name") or identifier
+                wiz.chemical.selection_notes = notes
+            except Exception as e:
+                st.error(f"Failed to resolve the chemical prior to data retrieval: {e}")
+                return
+
+            try:
                 raw_bundle = api.get_all_chemical_data(wiz.chemical.selected_chemical_id)
             except Exception as e:
                 st.error(f"Data retrieval failed: {e}")
@@ -313,7 +416,8 @@ def render():
 
             # 2) Agents (respects your get_llm override if enabled via wizard)
             with st.spinner("Running agents…"):
-                final_report, agent_texts = _run_pipeline(filtered, wiz.chemical.identifier or wiz.chemical.selected_display_name or "Target", wiz.setup.context, wiz)
+                target_name = wiz.chemical.selected_display_name or wiz.chemical.identifier or "Target"
+                final_report, agent_texts = _run_pipeline(filtered, target_name, wiz.setup.context, wiz)
 
             st.success("Analysis complete.")
             st.markdown("### Synthesized Report")

@@ -63,8 +63,10 @@ from oqt_assistant.utils.qprf_enrichment import QPRFEnricher
 from oqt_assistant.components.guided_wizard import run_guided_wizard
 # Import data formatter and filters needed in execute_analysis
 # UPDATED IMPORT: Added format_chemical_data
-from oqt_assistant.utils.data_formatter import process_experimental_metadata, process_properties, format_chemical_data
+from oqt_assistant.utils.data_formatter import process_experimental_metadata
 from oqt_assistant.utils.filters import filter_experimental_records # NEW IMPORT
+from oqt_assistant.utils.key_studies import KeyStudyCollector
+from oqt_assistant.utils.hit_selection import select_hit_with_properties
 
 
 # Define the maximum number of experimental records to send to LLM agents
@@ -500,7 +502,6 @@ def generate_comprehensive_log(
     return log
 
 
-# UPDATED: Modified perform_chemical_analysis to use format_chemical_data
 def perform_chemical_analysis(identifier: str, search_type: str, context: str, simulator_guids: List[str], qsar_config: Dict[str, Any], scope_config: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
     """Perform chemical data retrieval using QSAR Toolbox API (Synchronous)."""
     
@@ -563,20 +564,18 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
              else:
                  raise QSARTimeoutError("Maximum retries exceeded during chemical search")
 
-        # --- Legacy selector: simply take the first record the API returns ---
-        if isinstance(search_result, list):
-            if not search_result:
-                raise QSARResponseError(f"Chemical not found: {identifier}")
-            selected_chemical_data = search_result[0]       # ← same as your 2024 build
-        else:
-            selected_chemical_data = search_result          # single-dict response
+        # --- Improved selection: pick best usable hit and pre-fetch calculators ---
+        hits = search_result if isinstance(search_result, list) else [search_result]
+        try:
+            chemical_data, precomputed_properties, chem_id, selection_notes = select_hit_with_properties(
+                api_client, identifier, hits, logger=logger
+            )
+        except RuntimeError as exc:
+            st.error(f"Failed to select a usable Toolbox entry for '{identifier}': {exc}")
+            return None
 
-        # UPDATED: Format the basic chemical data using the formatter for consistency
-        chemical_data = format_chemical_data(selected_chemical_data)
-
-        chem_id = chemical_data.get('ChemId')
-        if not chem_id:
-             raise QSARResponseError("Could not retrieve ChemId from search result.")
+        if selection_notes:
+            logger.debug("Hit selection notes for %s: %s", identifier, " | ".join(selection_notes))
 
         # --- UPDATED: Metabolism Simulation (Multi-Simulator) ---
         
@@ -666,22 +665,14 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
 
 
         # --- Properties Calculation (Conditional based on scope_config) ---
-        # UPDATED: Use dedicated formatter
-        properties = {}
         if scope_config.get("include_properties"):
-            update_progress(0.4, "📊 Calculating chemical properties...") # Adjusted progress
-            try:
-                raw_props = api_client.apply_all_calculators(chem_id) or {}
-                
-                # Use the dedicated formatter to process properties (handles various input formats)
-                # This replaces the previous manual processing logic that caused the UI issue.
-                properties = process_properties(raw_props)
-
-            except Exception as e:
-                st.warning(f"Error retrieving or processing properties: {str(e)}")
-                properties = {}
+            update_progress(0.4, "📊 Calculating chemical properties...")
+            properties = precomputed_properties or {}
+            if not properties:
+                st.warning("No calculable properties were returned for the selected Toolbox entry.")
         else:
             update_progress(0.4, "📊 Skipping chemical properties (per configuration)...")
+            properties = {}
 
 
         
@@ -1064,8 +1055,7 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
 
     try:
         # --- Step 1: Sequential Data Fetching ---
-        # perform_chemical_analysis is sync.
-        # It now uses process_properties and format_chemical_data internally.
+        # perform_chemical_analysis is sync and handles hit selection + property retrieval.
         results = perform_chemical_analysis(identifier, search_type, context, simulator_guids, qsar_config, scope_config)
 
         if results:
@@ -1078,6 +1068,17 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
             # Process metadata (Properties and Basic Info are already processed in perform_chemical_analysis)
             processed_experimental_data = process_experimental_metadata(results.get('experimental_data', []))
             
+            # --- NEW: Enrich with Key Study Information ---
+            try:
+                api_client = QSARToolboxAPI(base_url=qsar_config.get('api_url'))
+                collector = KeyStudyCollector(api_client)
+                processed_experimental_data = collector.enrich_experimental_records(processed_experimental_data)
+                results['experimental_data'] = processed_experimental_data # Update results with enriched data
+                logger.info("Successfully enriched experimental data with key study provenance.")
+            except Exception as e:
+                logger.warning(f"Failed to enrich experimental data with key study info: {e}")
+            # --- END NEW ---
+
             # Apply filters based on scope_config
             if scope_config:
                 exclude_adme_tk = scope_config.get("exclude_adme_tk", False)

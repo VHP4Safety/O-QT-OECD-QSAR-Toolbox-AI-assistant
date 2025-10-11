@@ -1,3 +1,4 @@
+
 # oqt_assistant/components/guided_wizard.py
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
@@ -5,12 +6,14 @@
 
 from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple, List
+import logging
 import streamlit as st
 
 from oqt_assistant.utils.qsar_api import QSARToolboxAPI, SearchOptions, QSARConnectionError, QSARTimeoutError, QSARResponseError
-from oqt_assistant.utils.data_formatter import format_chemical_data  # NEW
-from oqt_assistant.components.search import REGULATORY_ENDPOINTS # MODIFIED
-from oqt_assistant.utils.structure_3d import render_smiles_3d # NEW IMPORT
+from oqt_assistant.utils.data_formatter import format_chemical_data
+from oqt_assistant.utils.hit_selection import rank_hits_by_quality, select_hit_with_properties
+from oqt_assistant.components.search import REGULATORY_ENDPOINTS
+from oqt_assistant.utils.structure_3d import render_smiles_3d
 
 try:
     from oqt_assistant.components.search import REGULATORY_ENDPOINTS
@@ -26,6 +29,8 @@ except ImportError:
         "Skin/Eye Irritation/Corrosion",
         "Sensitization (Skin/Respiratory)",
     ]
+
+logger = logging.getLogger(__name__)
 
 
 def run_guided_wizard(*, ping_qsar=None, estimate_llm_cost=None, on_run_pipeline=None, get_llm_models=None) -> None:
@@ -253,6 +258,10 @@ def _perform_chemical_search(identifier: str, search_type: str):
     wiz["data"]["chemical_resolved"] = False
     wiz["data"]["resolved_chemical_data"] = None
     wiz["search_results"] = []
+    wiz["data"]["raw_hits"] = []
+    wiz["data"]["best_hit_notes"] = []
+    wiz["data"]["best_hit_properties"] = None
+    wiz["data"]["validated_hit_index"] = None
     try:
         with st.spinner("Searching for chemical..."):
             if search_type in ("name", "cas"):
@@ -261,17 +270,35 @@ def _perform_chemical_search(identifier: str, search_type: str):
                 search_result = api_client.search_by_name(identifier, search_option=SearchOptions.EXACT_MATCH)
             else:
                 search_result = api_client.search_by_smiles(identifier)
-        if search_result:
-            if isinstance(search_result, dict):
-                search_result = [search_result]
-            # Normalize & enrich (fixes Unknown names + CAS hyphenation)
-            formatted = [format_chemical_data(r) for r in search_result]
-            wiz["search_results"] = formatted
+        if not search_result:
+            st.warning("No exact match found. Try refining the identifier.")
+            return
+
+        hits = search_result if isinstance(search_result, list) else [search_result]
+        ranked_hits = rank_hits_by_quality(identifier, hits)
+        formatted = [format_chemical_data(r) for r in ranked_hits]
+        wiz["search_results"] = formatted
+        wiz["data"]["raw_hits"] = ranked_hits
+
+        if not formatted:
+            st.warning("No usable matches after applying ranking filters.")
+            return
+
+        try:
+            best_basic, best_props, best_chem_id, notes = select_hit_with_properties(
+                api_client, identifier, ranked_hits, logger=logger
+            )
+            wiz["data"]["best_hit_properties"] = best_props
+            wiz["data"]["best_hit_notes"] = notes
             if len(formatted) == 1:
                 wiz["data"]["chemical_resolved"] = True
-                wiz["data"]["resolved_chemical_data"] = formatted[0]
-        else:
-            st.warning("No exact match found. Try refining the identifier.")
+                wiz["data"]["resolved_chemical_data"] = best_basic
+                wiz["data"]["validated_hit_index"] = 0
+                st.success("Chemical automatically resolved to a validated QSAR Toolbox record.")
+            else:
+                st.info("Multiple matches found. Please select the correct entry below.")
+        except RuntimeError as exc:
+            st.warning(f"Matches were found, but none completed Toolbox calculator validation: {exc}")
     except (QSARConnectionError, QSARTimeoutError, QSARResponseError) as e:
         st.error(f"Search failed: {str(e)}")
 
@@ -279,6 +306,7 @@ def _perform_chemical_search(identifier: str, search_type: str):
 def _display_search_results():
     wiz = _get_wiz()
     results = wiz["search_results"]
+    raw_hits = wiz["data"].get("raw_hits", [])
     if not results or len(results) <= 1:
         return
     st.subheader(f"Found {len(results)} matches. Please select one:")
@@ -288,15 +316,54 @@ def _display_search_results():
         name = chem.get("Name") or chem.get("IUPACName") or f"ChemID {chem.get('ChemId', 'N/A')}"
         cas = chem.get("Cas") or "N/A"
         smi = chem.get("Smiles") or ""
-        label = f"{name}  •  CAS {cas}{('  •  ' + smi) if smi else ''}"
+        prefix = "⭐ " if i == 0 else ""
+        label = f"{prefix}{name}  •  CAS {cas}{('  •  ' + smi) if smi else ''}"
         options[label] = i
 
-    selected_label = st.radio("Select the correct chemical:", list(options.keys()), key="wiz_step2_selection")
+    default_index = wiz["data"].get("validated_hit_index")
+    radio_index = default_index if isinstance(default_index, int) and 0 <= default_index < len(results) else 0
+
+    selected_label = st.radio("Select the correct chemical:", list(options.keys()), index=radio_index, key="wiz_step2_selection")
     if selected_label:
         selected_index = options[selected_label]
-        selected_chemical = results[selected_index]
-        wiz["data"]["chemical_resolved"] = True
-        wiz["data"]["resolved_chemical_data"] = selected_chemical
+        if selected_index != wiz["data"].get("validated_hit_index"):
+            api_client = _get_api_client()
+            if api_client:
+                prioritized_hits = []
+                if raw_hits and 0 <= selected_index < len(raw_hits):
+                    prioritized_hits.append(raw_hits[selected_index])
+                    prioritized_hits.extend(hit for idx, hit in enumerate(raw_hits) if idx != selected_index)
+                else:
+                    prioritized_hits = raw_hits or []
+                if prioritized_hits:
+                    try:
+                        basic, props, chem_id, notes = select_hit_with_properties(
+                            api_client,
+                            wiz["data"].get("chemical_identifier", ""),
+                            prioritized_hits,
+                            logger=logger,
+                        )
+                        validated_index = next(
+                            (i for i, hit in enumerate(raw_hits) if hit.get("ChemId") == chem_id),
+                            selected_index,
+                        )
+                        if validated_index != selected_index:
+                            st.warning("The chosen entry could not be validated; switched to the closest valid match.")
+                        wiz["data"]["resolved_chemical_data"] = basic
+                        wiz["data"]["best_hit_properties"] = props
+                        wiz["data"]["best_hit_notes"] = notes
+                        wiz["data"]["chemical_resolved"] = True
+                        wiz["data"]["validated_hit_index"] = validated_index
+                    except RuntimeError as exc:
+                        st.error(f"Unable to validate the selected entry: {exc}")
+                        wiz["data"]["chemical_resolved"] = False
+                        wiz["data"]["resolved_chemical_data"] = None
+                else:
+                    st.warning("No Toolbox hits available to validate selection.")
+            else:
+                st.error("QSAR Toolbox API is not configured. Please update settings in Step 1.")
+
+        selected_chemical = wiz["data"].get("resolved_chemical_data") or results[selected_index]
         st.info("Preview of selected chemical:")
         _render_chem_identity_card(selected_chemical)
 
@@ -335,7 +402,10 @@ def _step_2_chemical_identification():
         chem_data = d.get("resolved_chemical_data", {}) or {}
         st.success("✅ Chemical Confirmed")
         _render_chem_identity_card(chem_data)
-        
+        notes = d.get("best_hit_notes") or d.get("selection_notes")
+        if notes:
+            st.caption("Validation notes: " + " | ".join(notes))
+
         smiles = chem_data.get("Smiles") or ""
         with st.expander("3D Preview", expanded=True):
             if smiles:
