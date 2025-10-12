@@ -1,4 +1,4 @@
-![O-QT Logo](o-qt_logo.jpg)
+![O-QT Logo](o-qt_logo.png)
 
 # 🧪 O-QT: The OECD QSAR Toolbox AI Assistant
 
