@@ -1,87 +1,102 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
 
-# tests/test_app.py
+"""Tests for high-level application helpers."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import streamlit as st # Needed for session_state mocking if testing functions directly
 
-# If using streamlit_testing library, import its helpers
-# from streamlit.testing.v1 import AppTest
+from oqt_assistant import app
 
-# Example: Unit test a helper function
-# Assuming app.py is importable. Adjust if necessary.
-from oqt_assistant.app import initialize_session_state # [cite: 25]
 
-def test_initialize_session_state_defaults():
-    """Test that session state gets default values"""
-    # Mock session_state (simplistic example)
-    # In a real test setup, you might need a more robust way to handle session_state
-    mock_session_state = {}
-    with patch('streamlit.session_state', mock_session_state):
-        initialize_session_state() # [cite: 25]
-        assert 'chemical_name' in st.session_state
-        assert st.session_state['chemical_name'] == ''
-        # Check other default values based on the actual initialize_session_state function
-        # Example: assert st.session_state['max_retries'] == 3 # [cite: 25]
-        assert 'max_retries' in st.session_state # Check if key exists
-        assert 'final_report' in st.session_state and st.session_state['final_report'] is None # [cite: 25]
-        # Add checks for all keys initialized in the function
+def test_initialize_session_state_defaults(streamlit_stub):
+    """Verify default session keys and configuration snapshots."""
+    streamlit_stub.session_state.clear()
 
-# Example: Integration-style test for the main analysis function (simplified)
-# This requires mocking API and LLM calls made within perform_chemical_analysis and the main async flow
-# Adjust patch targets based on actual imports in app.py
-@patch('oqt_assistant.app.perform_chemical_analysis') # Mock the data fetching part [cite: 34]
-@patch('oqt_assistant.app.analyze_chemical_context', new_callable=AsyncMock) # [cite: 51, 212]
-@patch('oqt_assistant.app.analyze_physical_properties', new_callable=AsyncMock) # [cite: 55, 216]
-@patch('oqt_assistant.app.analyze_environmental_fate', new_callable=AsyncMock) # [cite: 55, 218]
-@patch('oqt_assistant.app.analyze_profiling_reactivity', new_callable=AsyncMock) # [cite: 55, 220]
-@patch('oqt_assistant.app.analyze_experimental_data', new_callable=AsyncMock) # [cite: 55, 222]
-@patch('oqt_assistant.app.analyze_read_across', new_callable=AsyncMock) # [cite: 60, 225]
-@patch('oqt_assistant.app.synthesize_report', new_callable=AsyncMock) # [cite: 61, 229]
-@pytest.mark.asyncio
-async def test_main_analysis_flow(
-    mock_synthesize, mock_read_across, mock_exp, mock_prof, mock_env, mock_phys, mock_context, mock_perform_analysis
-):
-    """Test the overall orchestration in the main async function (highly simplified)"""
-    # --- Setup Mocks ---
-    # Mock perform_chemical_analysis to return dummy results
-    mock_perform_analysis.return_value = {
-        'chemical_data': {'basic_info': {'Name': 'TestChem'}, 'properties': {'LogP': 1}}, # [cite: 43]
-        'experimental_data': [], # [cite: 43]
-        'profiling': {}, # [cite: 43]
-        'context': 'test context' # [cite: 44]
-    }
-    # Mock agent return values
-    mock_context.return_value = "Confirmed Chemical: TestChem (CAS: N/A, SMILES: N/A)" # [cite: 213]
-    mock_phys.return_value = "Phys analysis"
-    mock_env.return_value = "Env analysis"
-    mock_prof.return_value = "Prof analysis"
-    mock_exp.return_value = "Exp analysis"
-    mock_read_across.return_value = "Read across analysis" # [cite: 225]
-    mock_synthesize.return_value = "Final synthesized report" # [cite: 229]
+    app.initialize_session_state()
 
-    # --- Simulate running the analysis part of app.main ---
-    # This is tricky without running the full Streamlit app loop.
-    # You might need to extract the core async logic from main()
-    # or use a testing framework like streamlit-testing.
+    state = streamlit_stub.session_state
+    assert state.analysis_results is None
+    assert state.final_report is None
+    assert state.comprehensive_log is None
+    assert state.progress_value == 0.0
+    assert state.progress_description == ""
+    assert state.retry_count == 0
+    assert state.max_retries == 15
 
-    # Example assertion (if you could trigger the flow):
-    # await run_the_analysis_part_of_main("TestChem", "name", "test context") # Hypothetical function
-    # mock_perform_analysis.assert_called_once_with("TestChem", "name", "test context")
-    # mock_context.assert_awaited_once()
-    # mock_phys.assert_awaited_once()
-    # # ... assert other agents called
-    # mock_synthesize.assert_awaited_once()
-    # assert st.session_state.final_report == "Final synthesized report"
+    # LLM configuration defaults
+    assert state.llm_config["provider"] == "OpenAI"
+    assert state.llm_config["model_name"] == "gpt-4.1-nano"
+    assert state.llm_config["temperature"] == 0.15
+    assert state.llm_config["max_tokens"] == 10_000
 
-    # Note: Testing the full Streamlit flow like this is complex.
-    # Consider testing the core async logic extracted into a separate, testable function.
-    # For now, this test serves as a placeholder structure.
-    assert True # Placeholder assertion
+    # QSAR connection defaults
+    assert "http" in state.qsar_config["api_url"]
+    assert state.qsar_config["config_complete"] is True
 
-# --- Add more tests for: ---
-# - Other helper functions (update_progress, check_connection) [cite: 27, 28]
-# - Error handling within the main analysis try/except blocks [cite: 67, 69]
-# - Testing specific logic within component render functions if possible (e.g., data preparation before display)
+
+def test_initialize_session_state_is_idempotent(streamlit_stub):
+    """Calling the initializer twice must preserve manual tweaks."""
+    streamlit_stub.session_state.clear()
+    app.initialize_session_state()
+
+    streamlit_stub.session_state.llm_config["provider"] = "OpenRouter"
+    streamlit_stub.session_state.qsar_config["api_url"] = "http://example/api"
+
+    app.initialize_session_state()
+
+    assert streamlit_stub.session_state.llm_config["provider"] == "OpenRouter"
+    assert streamlit_stub.session_state.qsar_config["api_url"] == "http://example/api"
+
+
+def test_update_progress_creates_progress_bar(streamlit_stub):
+    """Progress helpers update state and surface a reusable bar."""
+    streamlit_stub.session_state.clear()
+    app.initialize_session_state()
+
+    app.update_progress(0.5, "Halfway there")
+
+    state = streamlit_stub.session_state
+    assert state.progress_value == 0.5
+    assert state.progress_description == "Halfway there"
+    assert hasattr(state, "progress_bar")
+    assert state.progress_bar.value == 0.5
+    assert state.progress_bar.text == "Status: Halfway there"
+
+
+def test_check_connection_populates_catalog(monkeypatch, streamlit_stub):
+    """Connection checks should populate simulator and QSAR caches."""
+    streamlit_stub.session_state.clear()
+    app.initialize_session_state()
+
+    class DummyAPI:
+        session = MagicMock()
+
+        def get_version(self):
+            return {"version": "6.0"}
+
+        def get_simulators(self):
+            return [{"Guid": "sim-1", "Caption": "Simulator"}]
+
+        def get_profilers(self):
+            return [{"Guid": "prof-1"}]
+
+        def get_all_qsar_models_catalog(self):
+            return [{"Guid": "qsar-1", "Caption": "QSAR"}]
+
+    monkeypatch.setattr(
+        app,
+        "derive_recommended_qsar_models",
+        lambda catalog: catalog,
+    )
+
+    ok = app.check_connection(DummyAPI())
+
+    assert ok is True
+    assert streamlit_stub.session_state.connection_status is True
+    assert streamlit_stub.session_state.available_simulators[0]["Guid"] == "sim-1"
+    assert streamlit_stub.session_state.available_qsar_models[0]["Guid"] == "qsar-1"

@@ -1,7 +1,7 @@
 # oqt_assistant/utils/filters.py
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import List, Dict, Any, Tuple
 import logging

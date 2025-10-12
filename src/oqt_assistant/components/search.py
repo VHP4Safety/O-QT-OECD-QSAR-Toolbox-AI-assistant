@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 
 import streamlit as st
 from typing import Tuple, List
+
+# New imports
+from oqt_assistant.utils.qsar_api import QSARToolboxAPI, SearchOptions  # already in project
+from oqt_assistant.utils.structure_3d import render_smiles_3d # NEW
 
 # Define predefined regulatory endpoints for guided input
 REGULATORY_ENDPOINTS = [
@@ -79,9 +83,20 @@ def render_search_section() -> Tuple[str, str, str]:
                 help="Enter the SMILES notation of the chemical."
             )
 
+        with st.expander("3D Preview (optional)"):
+            if st.button("Preview structure"):
+                try:
+                    # If user typed a SMILES, render it here; otherwise guide them to run the search.
+                    if search_type == 'smiles' and identifier:
+                        render_smiles_3d(identifier)
+                    else:
+                        st.info("Enter a SMILES above to preview here, or run the analysis and open the 3D preview under ‘Chemical Data’.")
+                except Exception as e:
+                    st.warning(f"3D preview unavailable: {e}")
+
     with col2:
-        st.subheader("2. Analysis Context (Guided Workflow)")
-        st.markdown("Select relevant endpoints and provide custom context to guide the AI analysis (Addressing Reviewer #2).")
+        st.subheader("2. Analysis Context")
+        st.markdown("Select relevant endpoints and add any context that should steer the analysis.")
 
         # --- Guided Context (Checkboxes) ---
         expander_title = "Select Regulatory Endpoints (Optional)"
@@ -102,7 +117,6 @@ def render_search_section() -> Tuple[str, str, str]:
                 st.checkbox(endpoint, key=f"check_{endpoint}", value=initial_value, on_change=handle_individual_checkbox, args=(endpoint,))
 
         # --- Read-Across Potential ---
-        # Addressing Reviewer #1: Defining Read-Across Potential
         read_across_help = """
         **Read-Across Potential (Definition):** The likelihood that the toxicity profile of the target chemical can be accurately predicted by using existing data from structurally or mechanistically similar chemicals (analogues).
         Checking this box directs the AI agents to prioritize identifying data gaps and developing a detailed strategy for finding suitable analogues.

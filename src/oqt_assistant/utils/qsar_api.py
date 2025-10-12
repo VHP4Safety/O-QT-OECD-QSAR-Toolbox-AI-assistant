@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
 
 """
 Streamlined QSAR Toolbox API client
 """
+from __future__ import annotations
+
 import os
 import requests
 from typing import Optional, Dict, Any, List, Union
@@ -153,9 +155,13 @@ class QSARToolboxAPI:
             'Content-Type': 'application/json'
         })
 
+        # Internal caches for expensive discovery endpoints
+        self._qsar_model_catalog: list[dict[str, Any]] | None = None
+
     def _make_request(self, endpoint: str, method: str = 'GET', params: Dict = None, data: Dict = None) -> Any:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        logger.debug(f"Making {method} request to: {url} with params: {params}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Making %s request to: %s with params: %s", method, url, params)
         
         try:
             response = self.session.request(
@@ -166,8 +172,16 @@ class QSARToolboxAPI:
                 timeout=self.timeout
             )
             
-            logger.debug(f"Response status: {response.status_code}")
-            logger.debug(f"Response content: {response.text[:200]}...")  # Log first 200 chars
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Response status: %s", response.status_code)
+                preview = ""
+                if response.content:
+                    try:
+                        preview = response.text[:200]
+                    except Exception:  # pragma: no cover - fallback for binary payloads
+                        preview = ""
+                if preview:
+                    logger.debug("Response content preview: %s...", preview)
             
             if not response.ok:
                 raise QSARResponseError(f"API returned status {response.status_code}: {response.text}")
@@ -190,7 +204,12 @@ class QSARToolboxAPI:
             max_retries = self.max_retries
             
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        logger.info(f"Making {method} request to: {url} with robust retry (max_retries={max_retries})")
+        logger.info(
+            "Making %s request to: %s with robust retry (max_retries=%s)",
+            method,
+            url,
+            max_retries,
+        )
         
         last_exception = None
         
@@ -1032,13 +1051,55 @@ class QSARToolboxAPI:
         Maps to QPRF §3.1 (Model name/version)
         """
         try:
-            result = self._make_request(f'qsar/list/{position}')
+            encoded_position = urllib.parse.quote(position, safe="")
+            result = self._make_request(f'qsar/list/{encoded_position}')
             if isinstance(result, list):
                 return result
             return [result] if result else []
         except Exception as e:
             logger.error(f"Error getting QSAR models for {position}: {str(e)}")
             return []
+
+    def get_all_qsar_models_catalog(self) -> List[Dict[str, Any]]:
+        """Discover the full catalog of QSAR models across all endpoint positions."""
+        if self._qsar_model_catalog is not None:
+            return self._qsar_model_catalog
+
+        logger.info("Discovering QSAR model catalog across endpoint tree...")
+        catalog: list[dict[str, Any]] = []
+        seen_guids: set[str] = set()
+
+        try:
+            endpoint_tree = self.get_endpoint_tree() or []
+        except Exception as exc:
+            logger.error(f"Failed to retrieve endpoint tree for QSAR discovery: {exc}")
+            endpoint_tree = []
+
+        for position in endpoint_tree:
+            if not isinstance(position, str):
+                continue
+
+            try:
+                models = self.get_qsar_models(position) or []
+            except Exception as exc:
+                logger.debug(f"Skipping QSAR models for {position} due to error: {exc}")
+                continue
+
+            for entry in models:
+                if not isinstance(entry, dict):
+                    continue
+                guid = entry.get("Guid")
+                if not guid or guid in seen_guids:
+                    continue
+                seen_guids.add(guid)
+
+                record = dict(entry)
+                record.setdefault("RequestedPosition", position)
+                catalog.append(record)
+
+        logger.info("Discovered %d QSAR models spanning %d endpoint positions.", len(catalog), len(endpoint_tree))
+        self._qsar_model_catalog = catalog
+        return catalog
 
     def apply_qsar_model(self, qsar_guid: str, chem_id: str) -> Dict[str, Any]:
         """Apply QSAR model to a chemical with applicability domain assessment

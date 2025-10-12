@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 
 """
-Streamlit UI components for O'QT Assistant.
+Streamlit UI components for O-QT Assistant.
 
 ⚠️ Important:
 Do not import submodules here (no eager imports). Eager imports can trigger

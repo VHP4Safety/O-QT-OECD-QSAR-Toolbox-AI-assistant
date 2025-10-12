@@ -1,7 +1,9 @@
 # oqt_assistant/components/results.py
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
 
 import streamlit as st
 import pandas as pd
@@ -45,12 +47,13 @@ def render_results_section(results: Dict[str, Any], identifier: str):
     """Render the results section with tabs for different data types."""
     st.header(f"Analysis Results for: {identifier}")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🧪 Chemical Data",
         "📊 Properties (Calculated)",
         "📈 Experimental Data (Measured)",
         "🔬 Profiling & Reactivity",
-        "🧬 Metabolism (Simulated)"
+        "🧬 Metabolism (Simulated)",
+        "🔮 QSAR Models"
     ])
 
     # --- Tab 1: Chemical Data ---
@@ -73,6 +76,10 @@ def render_results_section(results: Dict[str, Any], identifier: str):
     # --- Tab 5: Metabolism (Simulated) ---
     with tab5:
         _render_metabolism_data(results.get('metabolism', {}))
+
+    # --- Tab 6: QSAR Models ---
+    with tab6:
+        _render_qsar_predictions(results.get('qsar_models', {}))
 
 
 def _render_chemical_info(chemical_data: Dict[str, Any]):
@@ -382,6 +389,64 @@ def _render_metabolism_data(metabolism_data: Dict[str, Any]):
                     except Exception as e:
                         st.warning(f"Could not display metabolites for {sim_name} in table format: {e}")
                         st.json(metabolites)
+
+def _render_qsar_predictions(qsar_data: Dict[str, Any]):
+    """Render QSAR model predictions grouped by applicability domain."""
+    st.subheader("QSAR Model Predictions (Applicability Domain)")
+
+    if not isinstance(qsar_data, dict) or not qsar_data:
+        st.info("QSAR predictions were not available.")
+        return
+
+    processed = qsar_data.get("processed", {}) if isinstance(qsar_data, dict) else {}
+    if not processed:
+        st.info("QSAR predictions were not available.")
+        return
+
+    summary = processed.get("summary", {})
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Models", summary.get("total", 0))
+    col2.metric("In Domain", summary.get("in_domain", 0))
+    col3.metric("Not Applicable", summary.get("not_applicable", 0))
+    col4.metric("Out of Domain", summary.get("out_of_domain", 0))
+
+    in_domain_records = processed.get("in_domain", [])
+    if in_domain_records:
+        st.markdown("#### In-Domain Predictions")
+        try:
+            rows = []
+            for rec in in_domain_records:
+                rows.append({
+                    "Model": rec.get("caption"),
+                    "Category": rec.get("top_category") or rec.get("requested_position"),
+                    "Value": rec.get("value"),
+                    "Unit": rec.get("unit"),
+                    "Runtime (s)": rec.get("runtime_seconds"),
+                    "Donator": rec.get("donator"),
+                })
+            df_in_domain = pd.DataFrame(rows)
+            df_in_domain.sort_values(by=["Runtime (s)"], inplace=True)
+            st.dataframe(df_in_domain, width="stretch", hide_index=True)
+        except Exception as e:
+            st.warning(f"Could not format in-domain predictions: {e}")
+            st.json(in_domain_records)
+    else:
+        st.info("No QSAR models reported the chemical within their applicability domain.")
+
+    not_applicable = processed.get("not_applicable", [])
+    if not_applicable:
+        with st.expander(f"Not Applicable ({len(not_applicable)})"):
+            st.json(not_applicable)
+
+    out_of_domain = processed.get("out_of_domain", [])
+    if out_of_domain:
+        with st.expander(f"Out of Domain ({len(out_of_domain)})"):
+            st.json(out_of_domain)
+
+    errors = processed.get("errors", [])
+    if errors:
+        with st.expander(f"Errors ({len(errors)})"):
+            st.json(errors)
 
 def render_download_section(results: Dict[str, Any], identifier: str):
     """Render section for downloading the raw QSAR Toolbox data."""

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
 
 import streamlit as st
 import sys
@@ -10,7 +10,6 @@ import json
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
-import pandas as pd
 import logging # Ensure logging is imported
 
 # Configure logging
@@ -39,7 +38,7 @@ except Exception:
 # Use absolute imports based on the package structure
 from oqt_assistant.utils.qsar_api import (
     QSARToolboxAPI, QSARConnectionError, QSARTimeoutError, QSARResponseError,
-    SearchOptions
+    SearchOptions, SLOW_PROFILER_GUIDS
 )
 # Import new agent functions (Updated signatures)
 from oqt_assistant.utils.llm_utils import (
@@ -49,23 +48,26 @@ from oqt_assistant.utils.llm_utils import (
     analyze_profiling_reactivity,
     analyze_experimental_data,
     analyze_metabolism,
+    analyze_qsar_predictions,
     analyze_read_across,
     synthesize_report
 )
 from oqt_assistant.components.search import render_search_section
-from oqt_assistant.components.results import render_results_section, render_download_section
 
 # Removed unused import of wizard
 
 # NEW IMPORT
 from oqt_assistant.utils.pdf_generator import generate_pdf_report
-from oqt_assistant.utils.qprf_enrichment import QPRFEnricher
 from oqt_assistant.components.guided_wizard import run_guided_wizard
 # Import data formatter and filters needed in execute_analysis
 # UPDATED IMPORT: Added format_chemical_data
-from oqt_assistant.utils.data_formatter import process_experimental_metadata
+from oqt_assistant.utils.data_formatter import process_experimental_metadata, process_qsar_predictions
+from oqt_assistant.utils.qsar_models import (
+    run_qsar_predictions,
+    derive_recommended_qsar_models,
+    format_qsar_model_label,
+)
 from oqt_assistant.utils.filters import filter_experimental_records # NEW IMPORT
-from oqt_assistant.utils.key_studies import KeyStudyCollector
 from oqt_assistant.utils.hit_selection import select_hit_with_properties
 
 
@@ -78,44 +80,21 @@ MAX_METABOLITES_PER_SIMULATOR = 50
 # Costs are per 1 Million tokens (Input/Output). 'id' is the actual model identifier for the API.
 LLM_MODELS = {
     "OpenAI": {
-        "gpt-4.1 (Recommended)": {"cost_input": 3.00, "cost_output": 12.00, "id": "gpt-4.1"},
+        "gpt-4.1": {"cost_input": 3.00, "cost_output": 12.00, "id": "gpt-4.1"},
         "gpt-4.1-mini": {"cost_input": 0.80, "cost_output": 3.20, "id": "gpt-4.1-mini"},
         "gpt-4.1-nano": {"cost_input": 0.20, "cost_output": 0.80, "id": "gpt-4.1-nano"},
-        # --- New GPT-5 series (OpenAI) ---
-        "gpt-5":       {"cost_input": 1.25, "cost_output": 10.00, "id": "gpt-5"},
-        "gpt-5-mini":  {"cost_input": 0.25, "cost_output":  2.00, "id": "gpt-5-mini"},
-        "gpt-5-nano":  {"cost_input": 0.05, "cost_output":  0.40, "id": "gpt-5-nano"},
+        "gpt-5": {"cost_input": 1.25, "cost_output": 10.00, "id": "gpt-5"},
+        "gpt-5-mini": {"cost_input": 0.25, "cost_output": 2.00, "id": "gpt-5-mini"},
+        "gpt-5-nano": {"cost_input": 0.05, "cost_output": 0.40, "id": "gpt-5-nano"},
     },
     "OpenRouter": {
         "OpenAI GPT-4.1": {"cost_input": 3.00, "cost_output": 12.00, "id": "openai/gpt-4.1"},
         "OpenAI GPT-4.1 Mini": {"cost_input": 0.80, "cost_output": 3.20, "id": "openai/gpt-4.1-mini"},
         "OpenAI GPT-4.1 Nano": {"cost_input": 0.20, "cost_output": 0.80, "id": "openai/gpt-4.1-nano"},
-        "OpenAI GPT-4o": {"cost_input": 5.00, "cost_output": 15.00, "id": "openai/gpt-4o"},
-        # --- New GPT-5 series (OpenRouter) ---
-        "OpenAI GPT-5":       {"cost_input": 1.25, "cost_output": 10.00, "id": "openai/gpt-5"},
-        "OpenAI GPT-5 Mini":  {"cost_input": 0.25, "cost_output":  2.00, "id": "openai/gpt-5-mini"},
-        "OpenAI GPT-5 Nano":  {"cost_input": 0.05, "cost_output":  0.40, "id": "openai/gpt-5-nano"},
-        "DeepSeek V3 (Free) - High Performance": {"cost_input": 0.00, "cost_output": 0.00, "id": "deepseek/deepseek-chat:free"},
-        "Llama 3.3 70B (Free) - High Performance": {"cost_input": 0.00, "cost_output": 0.00, "id": "meta-llama/llama-3.3-70b-instruct:free"},
-        "Llama 4 Scout (Free) - Huge Context": {"cost_input": 0.00, "cost_output": 0.00, "id": "meta-llama/llama-4-scout:free"},
-        "Qwen 3 235B (Free) - Multilingual": {"cost_input": 0.00, "cost_output": 0.00, "id": "qwen/qwen-3-235b:free"},
-        "Gemma 3 27B (Free) - Efficient": {"cost_input": 0.00, "cost_output": 0.00, "id": "google/gemma-3-27b:free"},
-        "DeepSeek V3.1 (Free)": {"cost_input": 0.00, "cost_output": 0.00, "id": "deepseek/deepseek-chat-v3.1:free"},
-        "Meta Llama 3 8B (Free)": {"cost_input": 0.00, "cost_output": 0.00, "id": "meta-llama/llama-3-8b-instruct:free"},
-        "Meta Llama 3.1 8B (Free)": {"cost_input": 0.00, "cost_output": 0.00, "id": "meta-llama/llama-3.1-8b-instruct:free"},
-        "Mistral 7B Instruct (Free)": {"cost_input": 0.00, "cost_output": 0.00, "id": "mistralai/mistral-7b-instruct:free"},
-        "Google Gemma 2 9B (Free)": {"cost_input": 0.00, "cost_output": 0.00, "id": "google/gemma-2-9b-it:free"},
-        "Anthropic Claude 3.5 Sonnet": {"cost_input": 3.00, "cost_output": 15.00, "id": "anthropic/claude-3.5-sonnet"},
-        "Google Gemini 1.5 Flash": {"cost_input": 0.35, "cost_output": 1.05, "id": "google/gemini-flash-1.5"},
-        "Meta Llama 3 70B Instruct": {"cost_input": 0.59, "cost_output": 0.79, "id": "meta-llama/llama-3-70b-instruct"},
+        "OpenAI GPT-5": {"cost_input": 1.25, "cost_output": 10.00, "id": "openai/gpt-5"},
+        "OpenAI GPT-5 Mini": {"cost_input": 0.25, "cost_output": 2.00, "id": "openai/gpt-5-mini"},
+        "OpenAI GPT-5 Nano": {"cost_input": 0.05, "cost_output": 0.40, "id": "openai/gpt-5-nano"},
     },
-    "HuggingFace": {
-        # Free/serverless via HF Inference API (rate-limited on free tier)
-        "Mistral 7B Instruct (HF)":   {"cost_input": 0.00, "cost_output": 0.00, "id": "mistralai/Mistral-7B-Instruct-v0.2"},
-        "Mixtral 8x7B Instruct (HF)": {"cost_input": 0.00, "cost_output": 0.00, "id": "mistralai/Mixtral-8x7B-Instruct-v0.1"},
-        "Qwen2.5 7B Instruct (HF)":   {"cost_input": 0.00, "cost_output": 0.00, "id": "Qwen/Qwen2.5-7B-Instruct"},
-        "Qwen2.5 14B Instruct (HF)":  {"cost_input": 0.00, "cost_output": 0.00, "id": "Qwen/Qwen2.5-14B-Instruct"},
-    }
 }
 
 # ... (Keep existing Callbacks for Guided Wizard: _get_llm_models, _ping_qsar, _estimate_cost, _on_run_pipeline) ...
@@ -160,7 +139,7 @@ def _on_run_pipeline(config: dict):
     # Context composition (Wizard combines these fields)
     context = config.get("context")
     if not context:
-        context = "General chemical hazard assessment (Guided Workflow)."
+        context = "General chemical hazard assessment."
 
     simulator_guids = config.get("simulator_guids", [])
 
@@ -183,11 +162,14 @@ def _on_run_pipeline(config: dict):
         "include_properties": config.get("include_properties", True),
         "include_experimental": config.get("include_experimental", True),
         "include_profiling": config.get("include_profiling", True),
+        "include_qsar": config.get("include_qsar", True),
         # New Exclusions
         "exclude_adme_tk": config.get("exclude_adme_tk", False),
         "exclude_mammalian_tox": config.get("exclude_mammalian_tox", False),
         # NEW: honor wizard profiler picks
         "selected_profiler_guids": config.get("selected_profiler_guids", []),
+        "selected_qsar_model_guids": config.get("selected_qsar_model_guids", []),
+        "include_slow_profilers": config.get("include_slow_profilers", False),
         # Read-Across details
         "rax_strategy": config.get("rax_strategy", "Hybrid"),
         "rax_similarity_basis": config.get("rax_similarity_basis", "Combined"),
@@ -250,6 +232,12 @@ def initialize_session_state():
         # NEW: Profiler catalog + selection
         'available_profilers': [],
         'selected_profiler_guids': [],
+        'available_qsar_models': [],
+        'recommended_qsar_models': [],
+        'recommended_qsar_model_guids': [],
+        'selected_qsar_model_guids': [],
+        'include_slow_profilers': False,
+        'include_qsar_models': True,
         # LLM error tracking
         'last_llm_error': None,
     }
@@ -259,7 +247,7 @@ def initialize_session_state():
     if 'llm_config' not in st.session_state:
         # Default configuration
         default_provider = 'OpenAI'
-        default_model_name = 'gpt-4.1 (Recommended)'
+        default_model_name = 'gpt-4.1-nano'
         
         # Attempt to load API key from environment variables
         # Prioritize OPENAI_API_KEY as a common default
@@ -323,9 +311,33 @@ def check_connection(api_client: QSARToolboxAPI) -> bool:
         # Fetch simulators upon successful connection (NEW)
         simulators = api_client.get_simulators()
         st.session_state.available_simulators = simulators
-        # NEW: also cache the profiler catalog
+        # NEW: also cache the profiler and QSAR catalogs
         profilers = api_client.get_profilers()
         st.session_state.available_profilers = profilers
+        try:
+            qsar_catalog = api_client.get_all_qsar_models_catalog()
+        except Exception as exc:
+            logger.warning(f"Could not fetch QSAR model catalog during connection check: {exc}")
+            qsar_catalog = []
+        st.session_state.available_qsar_models = qsar_catalog
+        recommended_qsar = derive_recommended_qsar_models(qsar_catalog)
+        st.session_state.recommended_qsar_models = recommended_qsar
+        recommended_guids = [
+            entry.get("Guid") for entry in recommended_qsar if entry.get("Guid")
+        ]
+        st.session_state.recommended_qsar_model_guids = recommended_guids
+        if not st.session_state.get('selected_qsar_model_guids'):
+            st.session_state.selected_qsar_model_guids = list(recommended_guids)
+
+        catalog_guids = [entry.get("Guid") for entry in qsar_catalog if isinstance(entry, dict)]
+        current_qsar_selection = st.session_state.get('selected_qsar_model_guids', [])
+        valid_qsar_selection = [guid for guid in current_qsar_selection if guid in catalog_guids]
+        if valid_qsar_selection:
+            st.session_state.selected_qsar_model_guids = valid_qsar_selection
+        elif recommended_guids:
+            st.session_state.selected_qsar_model_guids = list(recommended_guids)
+        else:
+            st.session_state.selected_qsar_model_guids = []
         
         # Validate existing selection against available simulators
         valid_selections = []
@@ -403,6 +415,7 @@ def render_specialist_downloads(identifier: str):
         try:
             # Generate the PDF content (this might take a moment)
             # We rely on the comprehensive_log containing all necessary data (metadata, reports)
+            # MODIFIED: Open-Source version uses the simplified PDF generator.
             pdf_bytes = generate_pdf_report(st.session_state.comprehensive_log)
             
             st.sidebar.download_button(
@@ -411,7 +424,7 @@ def render_specialist_downloads(identifier: str):
                 file_name=f"{identifier}_OQT_Report.pdf",
                 mime="application/pdf",
                 key="comprehensive_pdf_download",
-                help="Download a PDF containing the synthesized report, all specialist analyses, and analysis metadata."
+                help="Download a summary PDF containing the synthesized report and analysis metadata. (Detailed specialist analyses and advanced formatting reserved for O-QT Pro)."
             )
         except Exception as e:
             st.sidebar.error(f"Error generating PDF: {e}")
@@ -447,6 +460,7 @@ def render_specialist_downloads(identifier: str):
             "Profiling_Reactivity",
             "Experimental_Data",
             "Metabolism",
+            "QSAR_Predictions",
             "Read_Across"
         ]
 
@@ -482,7 +496,7 @@ def generate_comprehensive_log(
     log = {
         "metadata": {
             "timestamp": datetime.now().isoformat(),
-            "tool_name": "O'QT Assistant",
+            "tool_name": "O-QT Assistant",
             "version": "1.4.3" # Updated version for UI fixes
         },
         "configuration": {
@@ -511,7 +525,16 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             "include_properties": True,
             "include_experimental": True,
             "include_profiling": True,
+            "selected_profiler_guids": [],
+            "selected_qsar_model_guids": [],
+            "include_slow_profilers": False,
+            "include_qsar": True,
         }
+    else:
+        scope_config.setdefault("include_qsar", True)
+        scope_config.setdefault("selected_profiler_guids", [])
+        scope_config.setdefault("selected_qsar_model_guids", [])
+        scope_config.setdefault("include_slow_profilers", False)
         
     try:
         # Initialize API client using provided configuration
@@ -676,28 +699,6 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
 
 
         
-        # --- QPRF/RAAF Metadata Enrichment (NEW) ---
-        update_progress(0.38, "📋 Enriching with QPRF/RAAF metadata...")
-        try:
-            enricher = QPRFEnricher(api_client)
-            
-            # Enrich substance identity (includes IUCLID lookup)
-            enriched_chemical = enricher.enrich_substance_identity(chemical_data)
-            chemical_data = enriched_chemical
-            
-            # Enrich calculator results with model metadata
-            if properties:
-                enriched_props = enricher.enrich_calculator_results(properties)
-                properties = enriched_props
-            
-            # Store software info for later use
-            software_info = enricher.get_software_info()
-            
-        except Exception as e:
-            logger.warning(f"QPRF enrichment failed (non-critical): {e}")
-            software_info = {}
-
-        
         # --- Experimental Data Retrieval (Conditional based on scope_config) ---
         experimental_data = []
         if scope_config.get("include_experimental"):
@@ -721,10 +722,12 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
                 selected_prof_guids = []
                 if isinstance(scope_config, dict):
                     selected_prof_guids = scope_config.get("selected_profiler_guids", []) or []
+                include_slow = bool(scope_config.get("include_slow_profilers"))
                 profiling_data = api_client.get_chemical_profiling(
                     chem_id,
                     # keep default simulator (No metabolism)
-                    selected_profiler_guids=tuple(selected_prof_guids) if selected_prof_guids else None
+                    selected_profiler_guids=tuple(selected_prof_guids) if selected_prof_guids else None,
+                    include_slow_profilers=include_slow
                 ) or {}
             except Exception as e:
                 st.warning(f"Error retrieving profiling data: {str(e)}")
@@ -733,7 +736,47 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             update_progress(0.75, "🔬 Skipping profiling data (per configuration)...")
 
 
-        update_progress(0.8, "✅ QSAR data retrieval complete!")
+        raw_qsar = {
+            "catalog_size": 0,
+            "executed_models": 0,
+            "predictions": [],
+            "summary": {"total": 0},
+            "selected_model_guids": []
+        }
+        qsar_processed = process_qsar_predictions([])
+        selected_qsar_guids = scope_config.get("selected_qsar_model_guids", []) or []
+        if scope_config.get("include_qsar", True) and selected_qsar_guids:
+            update_progress(0.82, "🔮 Running selected QSAR models...")
+            try:
+                try:
+                    api_client.session.get(f"{qsar_config.get('api_url')}/session/open", timeout=(5, 15))
+                except Exception as exc:
+                    logger.debug(f"Session warm-up encountered an issue (continuing): {exc}")
+                raw_qsar = run_qsar_predictions(
+                    api_client,
+                    chem_id,
+                    selected_model_guids=selected_qsar_guids,
+                    logger=logger
+                )
+                qsar_processed = process_qsar_predictions(raw_qsar.get("predictions", []))
+            except Exception as e:
+                st.warning(f"QSAR model execution failed: {str(e)}")
+                raw_qsar = {
+                    "catalog_size": 0,
+                    "executed_models": 0,
+                    "predictions": [],
+                    "summary": {"total": 0},
+                    "selected_model_guids": selected_qsar_guids
+                }
+                qsar_processed = process_qsar_predictions([])
+            update_progress(0.85, "✅ QSAR data retrieval complete!")
+            raw_qsar.setdefault("selected_model_guids", selected_qsar_guids)
+        elif scope_config.get("include_qsar", True):
+            update_progress(0.82, "🔮 QSAR predictions skipped (no models selected).")
+            raw_qsar["selected_model_guids"] = []
+        else:
+            update_progress(0.82, "🔮 QSAR predictions skipped (disabled).")
+            raw_qsar["selected_model_guids"] = []
 
         # Format results dictionary (without old report generation)
         results = {
@@ -744,11 +787,11 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             'experimental_data': experimental_data,
             'profiling': profiling_data,
             'metabolism': metabolism_data,
-            'context': context,
-            'qprf_metadata': {  # NEW: QPRF enrichment data
-                'software': software_info,
-                'enrichment_applied': True
-            }
+            'qsar_models': {
+                'raw': raw_qsar,
+                'processed': qsar_processed,
+            },
+            'context': context
         }
         return results
 
@@ -955,41 +998,35 @@ def render_configuration_ui():
 def render_methodology_and_transparency():
     """Renders information about the tool's methodology, scope, and transparency in the sidebar."""
     st.sidebar.markdown("---")
-    st.sidebar.header("About O'QT Assistant")
+    st.sidebar.header("About O-QT Assistant")
 
     with st.sidebar.expander("Licensing and Costs"):
         st.markdown("""
-        **O'QT Assistant is Open Source and Free.**
+        **O-QT Assistant is open source and free to use.**
 
-        This tool is licensed under the Apache 2.0 license. It is **not** a paid service.
+        The project is released under the Apache 2.0 license and does not bundle access to the OECD QSAR Toolbox or any LLM provider. You supply your own credentials.
 
-        **Costs:** While the tool itself is free, using Large Language Models (LLMs) like GPT-4o incurs costs based on API usage. You must provide your own API key (OpenAI or OpenRouter), and you are responsible for the associated charges. We provide cost estimates in the configuration section. Free models are available via OpenRouter.
+        **Usage costs:** Running analyses consumes API credits from your chosen LLM provider (OpenAI or OpenRouter). Enter your key in the configuration area to see current price guidance.
         """)
 
     with st.sidebar.expander("Methodology and Scope"):
         st.markdown("""
-        **Methodology:** O'QT employs a multi-agent LLM framework to automate the analysis of data retrieved directly from the OECD QSAR Toolbox API. This includes metabolism simulation.
+        **Workflow:** O-QT connects to the OECD QSAR Toolbox WebAPI, retrieves chemical information, profilers, metabolism simulations, and QSAR model outputs, and then coordinates specialist LLM agents plus a synthesiser to build the report.
 
-        **Scope and Rationale for Exclusions:**
-        The current version focuses on core hazard assessment endpoints readily available via the QSAR Toolbox API. 
-        In the Guided Workflow, users can now choose to exclude:
-        - **Toxicokinetics/ADME models:** To focus the analysis away from complex TK/ADME simulations.
-        - **Complex Mammalian Toxicity Endpoints:** To focus the analysis on environmental or specific mechanistic endpoints.
+        **Scope:** The community release focuses on core hazard assessment endpoints. Optional toggles allow you to skip ADME/TK and mammalian toxicity data when you need a faster pass.
 
-        **Data Extraction:** The agents extract available experimental data points retrieved from the Toolbox, including physicochemical parameters, toxicity endpoints, environmental fate parameters, etc., focusing specifically on records marked as "Measured value". Metadata associated with these studies is now also retrieved.
+        **Data Handling:** Agents surface measured values, metadata, and provenance exactly as returned by the Toolbox. Provenance tags in the report indicate whether information is an experimental record or a QSAR estimate.
+
+        **Applicability:** O-QT works best for industrial chemicals, environmental pollutants, and cosmetics that fall within the applicability domains of the selected profilers and models.
         """)
 
     with st.sidebar.expander("Transparency and Reliability"):
         st.markdown("""
-        **LLM Reliability:** We acknowledge the risk of LLMs generating incorrect information (hallucinations). We mitigate this by:
-        1. **Strict Prompts:** Agents are instructed to ONLY use data provided by the QSAR Toolbox API.
-        2. **Data Provenance:** The synthesized report strictly distinguishes between "Experimental (Toolbox)" and "QSAR Estimate (Toolbox)" data.
-        3. **Separation of Data:** Raw data retrieved from the Toolbox is displayed separately from the LLM-generated analysis.
-        4. **Configuration Control:** Users can adjust LLM parameters (Temperature/Tokens) in the Guided Workflow.
+        **LLM Reliability:** Prompts instruct agents to operate strictly on the retrieved Toolbox data. The combined PDF and JSON logs allow you to audit every value that appears in the narrative.
 
-        **Profiler Selection:** The QSAR Toolbox includes numerous profilers. To ensure performance via the API, O'QT automatically selects a subset of fast-responding and broadly relevant profilers (e.g., DNA/Protein binding, functional groups). This selection is predetermined by the tool based on performance testing.
+        **Profiler and Simulator Selection:** Standard mode uses a balanced default set. Both Standard mode and Guided mode let you customise profilers, QSAR models, and metabolism simulators before running an analysis.
 
-        **Comprehensive Log:** A complete JSON log of the analysis (configuration, inputs, raw data, and outputs) is available for download to ensure full transparency and reproducibility.
+        **Comprehensive Log:** Every run produces a JSON bundle capturing configuration, raw Toolbox payloads, agent outputs, and the final synthesis so that results remain reproducible.
         """)
 
 
@@ -1068,17 +1105,6 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
             # Process metadata (Properties and Basic Info are already processed in perform_chemical_analysis)
             processed_experimental_data = process_experimental_metadata(results.get('experimental_data', []))
             
-            # --- NEW: Enrich with Key Study Information ---
-            try:
-                api_client = QSARToolboxAPI(base_url=qsar_config.get('api_url'))
-                collector = KeyStudyCollector(api_client)
-                processed_experimental_data = collector.enrich_experimental_records(processed_experimental_data)
-                results['experimental_data'] = processed_experimental_data # Update results with enriched data
-                logger.info("Successfully enriched experimental data with key study provenance.")
-            except Exception as e:
-                logger.warning(f"Failed to enrich experimental data with key study info: {e}")
-            # --- END NEW ---
-
             # Apply filters based on scope_config
             if scope_config:
                 exclude_adme_tk = scope_config.get("exclude_adme_tk", False)
@@ -1137,6 +1163,7 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
             properties_data = results.get('chemical_data', {}).get('properties', {})
             profiling_data = results.get('profiling', {})
             metabolism_data = results.get('metabolism', {})
+            qsar_processed = results.get('qsar_models', {}).get('processed', {})
 
             # **Handle experimental data truncation for LLM agents**
             
@@ -1172,14 +1199,22 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
             task_prof = asyncio.create_task(analyze_profiling_reactivity(profiling_data, analysis_context, current_llm_config))
             task_exp  = asyncio.create_task(analyze_experimental_data(experimental_data_dict_for_llm, analysis_context, current_llm_config))
             task_meta = asyncio.create_task(analyze_metabolism(metabolism_data, analysis_context, current_llm_config))
+            task_qsar = asyncio.create_task(analyze_qsar_predictions(qsar_processed, analysis_context, current_llm_config))
 
             # ✅ Tolerate errors so the pipeline can continue
             results_gather = await asyncio.gather(
-                task_phys, task_env, task_prof, task_exp, task_meta,
+                task_phys, task_env, task_prof, task_exp, task_meta, task_qsar,
                 return_exceptions=True
             )
 
-            labels = ["Physical_Properties","Environmental_Fate","Profiling_Reactivity","Experimental_Data","Metabolism"]
+            labels = [
+                "Physical_Properties",
+                "Environmental_Fate",
+                "Profiling_Reactivity",
+                "Experimental_Data",
+                "Metabolism",
+                "QSAR_Predictions",
+            ]
             core_specialist_outputs_list = []
             for lbl, res in zip(labels, results_gather):
                 if isinstance(res, Exception):
@@ -1330,7 +1365,7 @@ def execute_analysis(identifier: str, search_type: str, context: str, simulator_
 
 # UPDATED: render_standard_mode is synchronous
 def render_standard_mode():
-    """Render the standard O'QT assistant interface"""
+    """Render the standard O-QT assistant interface"""
     
     # Always render methodology and transparency in sidebar first
     render_methodology_and_transparency()
@@ -1347,8 +1382,8 @@ def render_standard_mode():
         render_specialist_downloads(identifier_display)
 
     # --- Header ---
-    st.title("🧪 O'QT: The Open QSAR Toolbox AI Assistant") # Updated Title
-    st.markdown("Multi-Agent Chemical Analysis, Hazard Assessment, Metabolism Simulation, and Read-Across Recommendations")
+    st.title("🧪 O-QT Assistant: Multi-Agent Chemical Analysis")
+    st.markdown("Automated Hazard Assessment, Metabolism Simulation, and Read-Across Recommendations using the OECD QSAR Toolbox")
 
     # --- Main Area: Search Input (No longer using st.form for better "Select All" functionality) ---
     
@@ -1364,52 +1399,172 @@ def render_standard_mode():
 
     identifier, search_type, context = render_search_section()
 
-    # --- UPDATED: Metabolism Simulator Selection (Multi-select) ---
-    st.subheader("3. Metabolism Simulation (Optional)")
-    if st.session_state.connection_status:
-        simulators = st.session_state.available_simulators
-        if simulators:
-            simulator_options = {s['Caption']: s['Guid'] for s in simulators}
-            
-            # Determine currently selected captions based on stored GUIDs
-            current_selections = [caption for caption, guid in simulator_options.items() if guid in st.session_state.selected_simulator_guids]
+    # --- UPDATED: Metabolism Simulator Selection ---
+    st.subheader("3. Metabolism Simulation")
 
-            selected_captions = st.multiselect(
-                "Select Metabolism Simulators (Select multiple or leave empty to skip)",
-                options=list(simulator_options.keys()),
-                default=current_selections,
-                help="Select one or more simulators (e.g., Rat liver S9, Autoxidation). This step may take several minutes per simulator. Leave empty to skip metabolism simulation."
-            )
-            # Update session state with the GUIDs of the selected captions
-            st.session_state.selected_simulator_guids = [simulator_options[caption] for caption in selected_captions]
+    if st.session_state.connection_status:
+        simulators = st.session_state.get('available_simulators', [])
+        if simulators:
+            simulator_options = {
+                sim.get("Caption", sim.get("Guid", f"Simulator {idx}")): sim.get("Guid")
+                for idx, sim in enumerate(simulators)
+                if isinstance(sim, dict) and sim.get("Guid")
+            }
+            labels = list(simulator_options.keys())
+            if "metabolism_selected_labels" not in st.session_state:
+                st.session_state.metabolism_selected_labels = labels.copy()
+
+            with st.expander("Select simulators", expanded=False):
+                col_all, col_clear = st.columns(2)
+                if col_all.button("Select all simulators"):
+                    st.session_state.metabolism_selected_labels = labels.copy()
+                    st.rerun()
+                if col_clear.button("Clear simulators"):
+                    st.session_state.metabolism_selected_labels = []
+                    st.rerun()
+
+                selected_labels = st.multiselect(
+                    "Metabolism simulators",
+                    options=labels,
+                    default=st.session_state.metabolism_selected_labels,
+                )
+                st.session_state.metabolism_selected_labels = selected_labels
+
+            st.session_state.selected_simulator_guids = [
+                simulator_options[label] for label in st.session_state.metabolism_selected_labels
+            ]
         else:
             st.info("No metabolism simulators available from the API.")
             st.session_state.selected_simulator_guids = []
     else:
-        st.warning("Connect to QSAR Toolbox (see sidebar) to enable metabolism simulation selection.")
+        st.warning("Connect to the QSAR Toolbox (see sidebar) to enable simulator selection.")
         st.session_state.selected_simulator_guids = []
 
-    # NEW: Profiler selection (Optional)
-    st.subheader("4. Profiler Selection (Optional)")
+
+    # --- Profiler Selection ---
+    st.subheader("4. Profiler Selection")
+
     if st.session_state.connection_status:
         profs = st.session_state.get('available_profilers', [])
         if profs:
-            prof_options = { (p.get('Caption') or p.get('Name') or p.get('Guid')): p.get('Guid')
-                             for p in profs if isinstance(p, dict) and p.get('Guid') }
-            current_prof = [cap for cap, gid in prof_options.items()
-                            if gid in (st.session_state.get('selected_profiler_guids') or [])]
-            selected_prof_caps = st.multiselect(
-                "Select profilers to run (leave empty to use the balanced default set)",
-                options=list(prof_options.keys()),
-                default=current_prof,
-                help="Pick specific profilers to execute; empty = run the pre-optimized fast subset (~13)."
-            )
-            st.session_state.selected_profiler_guids = [prof_options[c] for c in selected_prof_caps]
+            prof_options = {
+                (p.get('Caption') or p.get('Name') or p.get('Guid')): p.get('Guid')
+                for p in profs if isinstance(p, dict) and p.get('Guid')
+            }
+            slow_profiler_set = {guid for guid in prof_options.values() if guid in SLOW_PROFILER_GUIDS}
+            slow_labels = [label for label, guid in prof_options.items() if guid in slow_profiler_set]
+            fast_labels = [label for label in prof_options.keys() if label not in slow_labels]
+
+            if "prof_selected_labels" not in st.session_state:
+                st.session_state.prof_selected_labels = fast_labels.copy()
+            if "include_slow_profilers" not in st.session_state:
+                st.session_state.include_slow_profilers = False
+
+            with st.expander("Select profilers", expanded=False):
+                col_fast, col_all, col_clear = st.columns(3)
+                if col_fast.button("Select fast profilers"):
+                    st.session_state.prof_selected_labels = fast_labels.copy()
+                    st.session_state.include_slow_profilers = False
+                    st.rerun()
+                if col_all.button("Select all profilers"):
+                    st.session_state.prof_selected_labels = list(prof_options.keys())
+                    st.session_state.include_slow_profilers = True
+                    st.rerun()
+                if col_clear.button("Clear profilers"):
+                    st.session_state.prof_selected_labels = []
+                    st.session_state.include_slow_profilers = False
+                    st.rerun()
+
+                include_slow = st.checkbox(
+                    "Include ECHA profilers (~20 s each)",
+                    value=st.session_state.get('include_slow_profilers', False),
+                    help="Adds the three ECHA profilers that typically require ~20 seconds per run."
+                )
+                if include_slow != st.session_state.get('include_slow_profilers', False):
+                    st.session_state.include_slow_profilers = include_slow
+                    if include_slow:
+                        combined = st.session_state.prof_selected_labels + [label for label in slow_labels if label not in st.session_state.prof_selected_labels]
+                        st.session_state.prof_selected_labels = combined
+                    else:
+                        st.session_state.prof_selected_labels = [label for label in st.session_state.prof_selected_labels if label not in slow_labels]
+                    st.rerun()
+
+                selected_labels = st.multiselect(
+                    "Profilers",
+                    options=list(prof_options.keys()),
+                    default=st.session_state.prof_selected_labels,
+                )
+                st.session_state.prof_selected_labels = selected_labels
+
+            st.session_state.selected_profiler_guids = [
+                prof_options[label] for label in st.session_state.prof_selected_labels
+            ]
+            st.session_state.include_slow_profilers = any(label in slow_labels for label in st.session_state.prof_selected_labels)
         else:
             st.info("Profiler catalog not available from the API.")
+            st.session_state.selected_profiler_guids = []
+            st.session_state.include_slow_profilers = False
     else:
-        st.warning("Connect to QSAR Toolbox to enable profiler selection.")
+        st.warning("Connect to the QSAR Toolbox to customise profilers.")
+        st.session_state.selected_profiler_guids = []
+        st.session_state.include_slow_profilers = False
 
+    # --- QSAR Model Selection ---
+    st.subheader("5. QSAR Model Predictions")
+
+    if st.session_state.connection_status:
+        qsar_catalog = st.session_state.get('available_qsar_models', [])
+        if qsar_catalog:
+            option_map = {}
+            for entry in qsar_catalog:
+                guid = entry.get("Guid")
+                if not guid:
+                    continue
+                label = format_qsar_model_label(entry)
+                option_map[label] = guid
+
+            labels = list(option_map.keys())
+            recommended_guids = st.session_state.get('recommended_qsar_model_guids', [])
+            recommended_labels = [label for label, guid in option_map.items() if guid in recommended_guids]
+            if not recommended_labels:
+                recommended_labels = labels.copy()
+
+            if "qsar_selected_labels" not in st.session_state or not st.session_state.qsar_selected_labels:
+                st.session_state.qsar_selected_labels = recommended_labels.copy()
+
+            with st.expander("Select QSAR models", expanded=False):
+                col_rec, col_all, col_clear = st.columns(3)
+                if col_rec.button("Recommended set"):
+                    st.session_state.qsar_selected_labels = recommended_labels.copy()
+                    st.rerun()
+                if col_all.button("Select all models"):
+                    st.session_state.qsar_selected_labels = labels.copy()
+                    st.rerun()
+                if col_clear.button("Clear models"):
+                    st.session_state.qsar_selected_labels = []
+                    st.rerun()
+
+                selected_labels = st.multiselect(
+                    "QSAR models",
+                    options=labels,
+                    default=st.session_state.qsar_selected_labels,
+                )
+                st.session_state.qsar_selected_labels = selected_labels
+
+            if not st.session_state.qsar_selected_labels:
+                st.info("No QSAR models selected. The QSAR step will be skipped for this run.")
+
+            st.session_state.selected_qsar_model_guids = [
+                option_map[label] for label in st.session_state.qsar_selected_labels
+            ]
+        else:
+            st.info("QSAR model catalog not yet loaded. Use ‘Check Connection’ in the sidebar to refresh.")
+            st.session_state.selected_qsar_model_guids = []
+    else:
+        st.warning("Connect to the QSAR Toolbox to choose specific QSAR models.")
+        st.session_state.selected_qsar_model_guids = []
+
+    # Analyze Button placed prominently after inputs
     # Analyze Button placed prominently after inputs
     analyze_button_clicked = st.button("🚀 Analyze Chemical", type="primary", width="stretch")
 
@@ -1456,7 +1611,10 @@ def render_standard_mode():
                     "include_properties": True,
                     "include_experimental": True,
                     "include_profiling": True,
-                    "selected_profiler_guids": st.session_state.get('selected_profiler_guids', [])
+                    "selected_profiler_guids": st.session_state.get('selected_profiler_guids', []),
+                    "include_slow_profilers": st.session_state.get('include_slow_profilers', False),
+                    "include_qsar": st.session_state.get('include_qsar_models', True),
+                    "selected_qsar_model_guids": st.session_state.get('selected_qsar_model_guids', []),
                 }
             )
             # Force rerun to display results and downloads
@@ -1480,34 +1638,38 @@ def render_standard_mode():
 
 # UPDATED: main is synchronous
 def main():
+    from oqt_assistant.components.results import (
+        render_results_section,
+        render_download_section,
+    )
+
     st.set_page_config(
-        page_title="O'QT Assistant",
-        page_icon="logo.png",
+        page_title="O-QT Assistant",
+        page_icon="o-qt_logo.jpg",
         layout="wide"
     )
 
     initialize_session_state()
 
     # Display the logo at the top of the sidebar
-    if os.path.exists("logo.png"):
-        st.sidebar.image("logo.png", width="stretch")
+    logo_path = "o-qt_logo.jpg"
+    if os.path.exists(logo_path):
+        st.sidebar.image(logo_path, width="stretch")
 
-    # --- Sidebar Configuration and Information ---
-    render_configuration_ui()
-
-    # Mode selection
+    # Mode selection positioned directly under the logo
     # Determine index based on whether a wizard session is active
     if "wiz" in st.session_state:
         default_index = 1
     else:
         default_index = 0
-
-    modes = ["Standard", "Guided Wizard (beta)"]
-    
-    # Use a key for the radio button to ensure state persistence
+    modes = ["Simple Mode", "Guided Mode"]
     ui_mode = st.sidebar.radio("Mode", modes, index=default_index, key="ui_mode_selector")
 
-    if ui_mode == "Guided Wizard (beta)":
+    # --- Sidebar Configuration and Information ---
+    render_configuration_ui()
+
+    # Use a key for the radio button to ensure state persistence
+    if ui_mode == "Guided Mode":
         run_guided_wizard(
             ping_qsar=_ping_qsar,
             estimate_llm_cost=_estimate_cost,

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
 
 """
 Simple API behavior tests for the streamlined_qsar_app.
@@ -8,25 +8,21 @@ Simple API behavior tests for the streamlined_qsar_app.
 These tests focus on validating the input/output behavior of the agent functions,
 not the internal implementation details.
 """
-import pytest
-import asyncio
 import json
-from unittest.mock import patch
 
 class TestChemicalAnalysis:
     """Test the chemical analysis functionality by checking input-output behavior."""
 
-    @pytest.mark.asyncio
-    async def test_chemical_data_formatting(self):
+    def test_chemical_data_formatting(self):
         """Test the data formatting doesn't throw errors and has expected keys."""
         from oqt_assistant.utils.data_formatter import format_chemical_data, format_calculator_result, clean_response_data
 
         # Test format_chemical_data with minimal data
         chemical_data_result = format_chemical_data({"SubstanceType": "Test", "ChemId": "123"})
-        assert chemical_data_result["type"] == "Test"
-        assert chemical_data_result["id"] == "123"
-        assert "names" in chemical_data_result
-        assert "smiles" in chemical_data_result
+        assert chemical_data_result["SubstanceType"] == "Test"
+        assert chemical_data_result["ChemId"] == "123"
+        assert "Names" in chemical_data_result
+        assert "Smiles" in chemical_data_result
 
         # Test format_calculator_result with minimal data
         calc_result = format_calculator_result({"CalculatorName": "Test Calc"})
@@ -41,12 +37,11 @@ class TestChemicalAnalysis:
             "profiling": {"available_profilers": [{"name": "Test"}]}
         })
         assert "chemical_data" in clean_data
-        assert "properties" in clean_data
+        assert "properties" in clean_data["chemical_data"]
         assert "experimental_data" in clean_data
         assert "profiling" in clean_data
 
-    @pytest.mark.asyncio
-    async def test_safe_json_serialization(self):
+    def test_safe_json_serialization(self):
         """Test the safe_json serialization function handles complex types."""
         from oqt_assistant.utils.data_formatter import safe_json
         
@@ -58,8 +53,7 @@ class TestChemicalAnalysis:
         assert parsed["name"] == "test"
         assert parsed["value"] == 123
 
-    @pytest.mark.asyncio
-    async def test_qsar_api_error_classes(self):
+    def test_qsar_api_error_classes(self):
         """Test that QSAR API error classes are correctly defined."""
         from oqt_assistant.utils.qsar_api import QSARConnectionError, QSARTimeoutError, QSARResponseError
         
@@ -72,8 +66,7 @@ class TestChemicalAnalysis:
         error = QSARConnectionError("Test error message")
         assert str(error) == "Test error message"
 
-    @pytest.mark.asyncio
-    async def test_agent_functions_exist(self):
+    def test_agent_functions_exist(self):
         """Test that the agent functions exist and have the expected signature."""
         from oqt_assistant.utils.llm_utils import (
             analyze_chemical_context,

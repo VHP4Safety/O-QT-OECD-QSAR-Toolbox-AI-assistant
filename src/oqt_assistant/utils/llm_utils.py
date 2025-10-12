@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
 
 """
 Utility functions for LLM-based report generation using a multi-agent approach.
@@ -16,6 +16,32 @@ from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
+
+# NEW: Global semaphore for TPM rate-limit control (lazy-initialized per event loop)
+_MAX_CONC = int(os.getenv("OQT_MAX_LLM_CONCURRENCY", "2"))
+_LLM_SEMAPHORE = None
+_SEMAPHORE_LOOP_ID = None
+
+def _get_semaphore():
+    """Get or create semaphore for the current event loop."""
+    global _LLM_SEMAPHORE, _SEMAPHORE_LOOP_ID
+    
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+        
+        # Create new semaphore if we're in a different event loop
+        if _SEMAPHORE_LOOP_ID != loop_id:
+            _LLM_SEMAPHORE = asyncio.Semaphore(_MAX_CONC)
+            _SEMAPHORE_LOOP_ID = loop_id
+            logger.debug(f"Created new semaphore for event loop {loop_id} (concurrency={_MAX_CONC})")
+        
+        return _LLM_SEMAPHORE
+    except RuntimeError:
+        # No event loop running, return None
+        return None
+
+logger.info(f"LLM concurrency limit set to {_MAX_CONC} (via OQT_MAX_LLM_CONCURRENCY)")
 
 # NOTE: We intentionally DO NOT import streamlit here. Configuration must be passed explicitly.
 
@@ -258,7 +284,7 @@ def initialize_llm(llm_config: Dict[str, Any], timeout: float = 120.0) -> ChatOp
                 llm.default_headers = {}
             llm.default_headers.update({
                 "HTTP-Referer": "https://oqt-assistant.com", # Replace if hosted elsewhere
-                "X-Title": "O'QT Assistant"
+                "X-Title": "O-QT Assistant"
             })
 
     return llm
@@ -267,9 +293,16 @@ output_parser = StrOutputParser()
 
 # NEW: Helper function for robust chain invocation
 async def _invoke_chain(chain, input_dict, agent_name: str) -> str:
-    """Invokes the LangChain chain and ensures a non-empty string response."""
+    """Invokes the LangChain chain with TPM throttling and ensures a non-empty string response."""
     try:
-        response = await chain.ainvoke(input_dict)
+        # NEW: Throttle concurrent LLM calls to prevent TPM bursts
+        semaphore = _get_semaphore()
+        if semaphore:
+            async with semaphore:
+                response = await chain.ainvoke(input_dict)
+        else:
+            # No event loop, invoke directly (shouldn't happen in async context)
+            response = await chain.ainvoke(input_dict)
         
         # Check if response is valid (it should be a string from StrOutputParser)
         if not isinstance(response, str) or not response.strip():
@@ -282,7 +315,7 @@ async def _invoke_chain(chain, input_dict, agent_name: str) -> str:
     except Exception as e:
         # Catch exceptions during invocation (e.g., API errors, timeouts within LangChain)
         logger.error(f"Error during invocation of {agent_name}: {e}", exc_info=True)
-        # Re-raise the exception so the calling function (e.g., execute_analysis_async in app.py) 
+        # Re-raise the exception so the calling function (e.g., execute_analysis_async in app.py)
         # can handle it globally (e.g., generate fallback report, display auth errors).
         raise e
 
@@ -385,10 +418,34 @@ async def analyze_profiling_reactivity(data: Dict[str, Any], context: str, llm_c
 # --- Experimental Data Agent ---
 @async_lru_cache(maxsize=128)
 async def analyze_experimental_data(data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
-    """Analyzes experimental data using an LLM agent, returning text."""
+    """Analyzes experimental data using an LLM agent with smart sampling for large payloads."""
     llm = initialize_llm(llm_config)
-
-    data_json = safe_json(data)
+    
+    exp_results = data.get("experimental_results", [])
+    
+    # Smart sampling - prioritize most recent records
+    max_records = int(os.getenv("OQT_EXP_MAX_RECORDS", "500"))
+    
+    if len(exp_results) > max_records:
+        logger.info(f"Experimental data has {len(exp_results)} records, selecting top {max_records} most relevant")
+        
+        # Prioritize by publication year (most recent first)
+        def sort_key(record):
+            year = record.get("Publication_Year", 0)
+            try:
+                year = int(year) if year else 0
+            except (ValueError, TypeError):
+                year = 0
+            return -year
+        
+        sorted_results = sorted(exp_results, key=sort_key)
+        exp_results = sorted_results[:max_records]
+        logger.info(f"Retained {len(exp_results)} experimental records after year-based prioritization")
+    
+    # Prepare data for LLM
+    processed_data = {"experimental_results": exp_results}
+    data_json = safe_json(processed_data)
+    
     # Get prompts
     system_prompt = get_prompt("experimental_data", "system")
     user_template = get_prompt("experimental_data", "user")
@@ -400,7 +457,6 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str, llm_conf
     chain = prompt_template | llm | output_parser
     input_dict = {"context": context, "data_json": data_json}
     
-    # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Experimental Data Agent")
     return response
 
@@ -445,6 +501,33 @@ async def analyze_metabolism(data: Dict[str, Any], context: str, llm_config: Dic
     
     # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Metabolism Agent")
+    return response
+
+# --- QSAR Predictions Agent ---
+@async_lru_cache(maxsize=128)
+async def analyze_qsar_predictions(data: Dict[str, Any], context: str, llm_config: Dict[str, Any]) -> str:
+    """Analyzes QSAR predictions (filtered to in-domain models) using an LLM agent."""
+    predictions = data.get("in_domain") if isinstance(data, dict) else None
+    if not predictions:
+        total_models = data.get("summary", {}).get("total", 0) if isinstance(data, dict) else 0
+        if total_models:
+            return f"No QSAR models reported the chemical within their applicability domain (evaluated {total_models} models)."
+        return "QSAR predictions were not available for analysis."
+
+    llm = initialize_llm(llm_config)
+    data_json = safe_json(data)
+
+    system_prompt = get_prompt("qsar_predictions", "system")
+    user_template = get_prompt("qsar_predictions", "user")
+
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", user_template)
+    ])
+    chain = prompt_template | llm | output_parser
+    input_dict = {"context": context, "data_json": data_json}
+
+    response = await _invoke_chain(chain, input_dict, "QSAR Predictions Agent")
     return response
 
 

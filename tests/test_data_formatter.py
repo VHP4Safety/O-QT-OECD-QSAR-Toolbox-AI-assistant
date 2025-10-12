@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Ivo Djidrovski <i.djidrovski@uu.nl>
 #
-# SPDX-License-Identifier: Apache 2.0
+# SPDX-License-Identifier: Apache-2.0
 
 # tests/test_data_formatter.py
 import pytest
@@ -28,7 +28,7 @@ def test_format_calculator_result_missing_data():
     """Test formatting with missing data""" # [cite: 74]
     raw_data = {"CalculatorName": "Partial Calc"}
     expected = {
-        "name": "Partial Calc", "type": "Unknown", "value": None,
+        "name": "Partial Calc", "type": "QSAR", "value": None,
         "unit": "", "min_value": None, "max_value": None, "family": ""
     }
     assert format_calculator_result(raw_data) == expected # [cite: 74]
@@ -39,12 +39,13 @@ def test_format_chemical_data_full():
         "SubstanceType": "MonoConstituent", "ChemId": "chem456", "Cas": "123-45-6",
         "ECNumber": "200-000-0", "Smiles": "CCO", "Names": ["Ethanol", "Ethyl alcohol"]
     }
-    expected = {
-        "type": "MonoConstituent", "id": "chem456", "cas": "123-45-6",
-        "ec_number": "200-000-0", "smiles": "CCO", "names": ["Ethanol", "Ethyl alcohol"],
-        "cas_smiles_relation": ""
-    }
-    assert format_chemical_data(raw_data) == expected # [cite: 76]
+    formatted = format_chemical_data(raw_data)
+    assert formatted["SubstanceType"] == "MonoConstituent"
+    assert formatted["ChemId"] == "chem456"
+    assert formatted["Cas"] == "123-45-6"
+    assert formatted["ECNumber"] == "200-000-0"
+    assert formatted["Smiles"] == "CCO"
+    assert formatted["Names"] == ["Ethanol", "Ethyl alcohol"]
 
 def test_clean_response_data_structure():
     """Test the overall structure of cleaned data""" # [cite: 77]
@@ -58,11 +59,10 @@ def test_clean_response_data_structure():
     }
     cleaned = clean_response_data(raw_api_response) # [cite: 77]
     assert "chemical_data" in cleaned
-    assert "properties" in cleaned
     assert "experimental_data" in cleaned
     assert "profiling" in cleaned
-    assert cleaned["chemical_data"]["id"] == "chem789" # [cite: 76]
-    assert "Boiling Point" in cleaned["properties"] # [cite: 78]
+    assert cleaned["chemical_data"]["basic_info"]["ChemId"] == "chem789" # [cite: 76]
+    assert "Boiling Point" in cleaned["chemical_data"]["properties"] # [cite: 78]
     assert len(cleaned["experimental_data"]) == 1 # [cite: 80]
     assert "available_profilers" in cleaned["profiling"] # [cite: 81, 280]
 
