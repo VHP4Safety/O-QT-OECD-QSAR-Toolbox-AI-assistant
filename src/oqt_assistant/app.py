@@ -53,6 +53,10 @@ from oqt_assistant.utils.llm_utils import (
     synthesize_report
 )
 from oqt_assistant.components.search import render_search_section
+from oqt_assistant.components.results import (
+    render_results_section,
+    render_download_section,
+)
 
 # Removed unused import of wizard
 
@@ -1638,11 +1642,6 @@ def render_standard_mode():
 
 # UPDATED: main is synchronous
 def main():
-    from oqt_assistant.components.results import (
-        render_results_section,
-        render_download_section,
-    )
-
     st.set_page_config(
         page_title="O-QT Assistant",
         page_icon="o-qt_logo.jpg",
