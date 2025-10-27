@@ -564,17 +564,21 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             if search_type == 'name':
                 # Check if caching is used and clear it if necessary
                 if hasattr(api_client.search_by_name, 'cache_clear'):
-                     api_client.search_by_name.cache_clear()
+                    api_client.search_by_name.cache_clear()
                 search_result = api_client.search_by_name(
                     identifier,
                     search_option=SearchOptions.EXACT_MATCH   # <- "0"
                 )
+            elif search_type == 'cas':
+                if hasattr(api_client.search_by_cas, 'cache_clear'):
+                    api_client.search_by_cas.cache_clear()
+                search_result = api_client.search_by_cas(identifier)
             elif search_type == 'smiles': # Explicitly handle smiles
                 search_result = api_client.search_by_smiles(identifier)
             else:
-                # Fallback/CAS handling (assuming API handles CAS via name search if search_type is not name/smiles)
+                # Fallback: treat unrecognised search types as exact name lookups
                 if hasattr(api_client.search_by_name, 'cache_clear'):
-                        api_client.search_by_name.cache_clear()
+                    api_client.search_by_name.cache_clear()
                 search_result = api_client.search_by_name(
                     identifier,
                     search_option=SearchOptions.EXACT_MATCH

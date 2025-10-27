@@ -321,6 +321,36 @@ class QSARToolboxAPI:
             self.timeout = original_timeout
 
     @lru_cache(maxsize=64)
+    def search_by_cas(self, cas_number: str) -> List[Dict[str, Any]]:
+        """Search chemical by CAS number (digits only as required by the Toolbox API)."""
+        if not isinstance(cas_number, str):
+            cas_number = str(cas_number or "")
+
+        digits_only = "".join(ch for ch in cas_number if ch.isdigit())
+        if not digits_only:
+            logger.debug("CAS search skipped – identifier %s has no digits.", cas_number)
+            return []
+
+        original_timeout = self.timeout
+        search_timeout = (5, 15)  # Keep CAS search responsive
+
+        try:
+            self.timeout = search_timeout
+            try:
+                result = self._make_request(f'search/cas/{digits_only}/false')
+            except QSARResponseError as exc:
+                # 400 responses indicate an invalid CAS format; treat as no hits
+                if "status 400" in str(exc):
+                    logger.debug("CAS search for %s returned 400 response; treating as no hits.", digits_only)
+                    return []
+                raise
+            if isinstance(result, dict):
+                return [result]
+            return result or []
+        finally:
+            self.timeout = original_timeout
+
+    @lru_cache(maxsize=64)
     def search_by_smiles(self, smiles: str) -> List[Dict[str, Any]]:
         """Search chemical by SMILES with a shorter timeout"""
         # Use shorter timeout for search to prevent hanging

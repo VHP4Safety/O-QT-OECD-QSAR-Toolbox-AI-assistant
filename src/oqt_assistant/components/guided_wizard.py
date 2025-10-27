@@ -275,10 +275,14 @@ def _perform_chemical_search(identifier: str, search_type: str):
     wiz["data"]["validated_hit_index"] = None
     try:
         with st.spinner("Searching for chemical..."):
-            if search_type in ("name", "cas"):
+            if search_type == "name":
                 if hasattr(api_client.search_by_name, "cache_clear"):
                     api_client.search_by_name.cache_clear()
                 search_result = api_client.search_by_name(identifier, search_option=SearchOptions.EXACT_MATCH)
+            elif search_type == "cas":
+                if hasattr(api_client.search_by_cas, "cache_clear"):
+                    api_client.search_by_cas.cache_clear()
+                search_result = api_client.search_by_cas(identifier)
             else:
                 search_result = api_client.search_by_smiles(identifier)
         if not search_result:

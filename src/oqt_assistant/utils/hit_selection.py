@@ -35,6 +35,7 @@ def _extract_candidate_names(hit: Dict[str, Any]) -> List[str]:
 def rank_hits_by_quality(identifier: str, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Sort Toolbox search hits by how well they match the requested identifier."""
     ident_norm = _normalize_identifier(identifier)
+    ident_digits = "".join(ch for ch in identifier if ch.isdigit())
     subtype_rank_map = {
         "monoconstituent": 0,
         "single constituent": 0,
@@ -62,10 +63,12 @@ def rank_hits_by_quality(identifier: str, hits: List[Dict[str, Any]]) -> List[Di
         primary_exact = 0 if ident_norm and main_norm == ident_norm else 1
         exact_matches = sum(1 for n in normalized_names if ident_norm and n == ident_norm)
         contains_matches = sum(1 for n in normalized_names if ident_norm and ident_norm in n)
-        has_any_match = 0 if (exact_matches or contains_matches) else 1
-
         cas_raw = str(hit.get("Cas") or hit.get("CAS") or "")
         cas_digits = "".join(ch for ch in cas_raw if ch.isdigit())
+        cas_exact_match = bool(ident_digits) and cas_digits == ident_digits
+        cas_priority = 0 if cas_exact_match else (0 if not ident_digits else 1)
+        has_any_match = 0 if (exact_matches or contains_matches or cas_exact_match) else 1
+
         cas_rank = 0 if cas_digits and cas_digits != "0" else 1
 
         has_smiles = bool(hit.get("Smiles"))
@@ -74,6 +77,7 @@ def rank_hits_by_quality(identifier: str, hits: List[Dict[str, Any]]) -> List[Di
         ranked.append(
             (
                 (
+                    cas_priority,
                     subtype_rank,
                     primary_exact,
                     has_any_match,
@@ -153,4 +157,3 @@ def select_hit_with_properties(
 
     detail = " | ".join(selection_notes) if selection_notes else "No usable hits."
     raise RuntimeError(f"Unable to retrieve usable Toolbox record for {identifier}. Details: {detail}")
-

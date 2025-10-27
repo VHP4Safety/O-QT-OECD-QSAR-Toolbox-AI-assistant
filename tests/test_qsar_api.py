@@ -16,6 +16,7 @@ from oqt_assistant.utils.qsar_api import QSARToolboxAPI, QSARConnectionError, QS
 def clear_qsar_caches():
     """Clears the LRU caches for decorated functions in qsar_api before each test."""
     qsar_api.QSARToolboxAPI.search_by_name.cache_clear()
+    qsar_api.QSARToolboxAPI.search_by_cas.cache_clear()
     qsar_api.QSARToolboxAPI.search_by_smiles.cache_clear()
     qsar_api.QSARToolboxAPI.get_all_chemical_data.cache_clear()
     qsar_api.QSARToolboxAPI.apply_all_calculators.cache_clear()
@@ -50,6 +51,35 @@ def test_search_by_name_success(mock_request, api_client):
     assert result == [{"ChemId": "123", "Name": "TestChem"}]
     mock_request.assert_called_once()
     # Add more assertions on the request args if needed (URL, method, params)
+
+@patch('oqt_assistant.utils.qsar_api.requests.Session.request')
+def test_search_by_cas_strips_non_digits(mock_request, api_client):
+    """CAS search should strip hyphens and return results."""
+    mock_response = MagicMock()
+    mock_response.ok = True
+    mock_response.json.return_value = [{"ChemId": "c1", "Cas": "688824"}]
+    mock_request.return_value = mock_response
+
+    result = api_client.search_by_cas("688-82-4")
+
+    assert result == [{"ChemId": "c1", "Cas": "688824"}]
+    mock_request.assert_called_once()
+    _, kwargs = mock_request.call_args
+    assert kwargs["url"].endswith("/search/cas/688824/false")
+
+@patch('oqt_assistant.utils.qsar_api.requests.Session.request')
+def test_search_by_cas_handles_400(mock_request, api_client):
+    """Invalid CAS formats should quietly return no hits."""
+    mock_response = MagicMock()
+    mock_response.ok = False
+    mock_response.status_code = 400
+    mock_response.text = "Invalid CAS"
+    mock_request.return_value = mock_response
+
+    result = api_client.search_by_cas("not-a-cas")
+
+    assert result == []
+    mock_request.assert_not_called()
 
 @patch('oqt_assistant.utils.qsar_api.requests.Session.request') # [cite: 95]
 def test_search_by_smiles_timeout(mock_request, api_client):
