@@ -158,18 +158,19 @@ class QSARToolboxAPI:
         # Internal caches for expensive discovery endpoints
         self._qsar_model_catalog: list[dict[str, Any]] | None = None
 
-    def _make_request(self, endpoint: str, method: str = 'GET', params: Dict = None, data: Dict = None) -> Any:
+    def _make_request(self, endpoint: str, method: str = 'GET', params: Dict = None, data: Dict = None, timeout: Any = None) -> Any:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Making %s request to: %s with params: %s", method, url, params)
         
+        effective_timeout = timeout if timeout is not None else self.timeout
         try:
             response = self.session.request(
                 method=method,
                 url=url,
                 params=params,
                 json=data if data else None,
-                timeout=self.timeout
+                timeout=effective_timeout
             )
             
             if logger.isEnabledFor(logging.DEBUG):
@@ -188,8 +189,16 @@ class QSARToolboxAPI:
             
             if not response.content:
                 return None
-            
-            return response.json()
+
+            # Try JSON first, but some endpoints may return plain text
+            try:
+                return response.json()
+            except ValueError:
+                # Fallback: return text payload (e.g., version endpoints return "4.7")
+                try:
+                    return response.text
+                except Exception:
+                    return None
             
         except requests.exceptions.Timeout as e:
             raise QSARTimeoutError(f"Request timed out: {str(e)}")
@@ -198,7 +207,7 @@ class QSARToolboxAPI:
         except requests.exceptions.RequestException as e:
             raise QSARResponseError(f"Request failed: {str(e)}")
 
-    def _make_request_with_robust_retry(self, endpoint: str, method: str = 'GET', params: Dict = None, data: Dict = None, max_retries: int = None) -> Any:
+    def _make_request_with_robust_retry(self, endpoint: str, method: str = 'GET', params: Dict = None, data: Dict = None, max_retries: int = None, timeout: Any = None) -> Any:
         """Make request with robust retry mechanism specifically for 500 errors"""
         if max_retries is None:
             max_retries = self.max_retries
@@ -222,7 +231,7 @@ class QSARToolboxAPI:
                     url=url,
                     params=params,
                     json=data if data else None,
-                    timeout=self.timeout
+                    timeout=timeout if timeout is not None else self.timeout
                 )
                 
                 logger.debug(f"Response status: {response.status_code}")
@@ -385,7 +394,10 @@ class QSARToolboxAPI:
         This avoids the 20k-record metadata payload that was timing out.
         """
         original_timeout = self.timeout
-        data_timeout = (5, 180)  # generous read budget; streaming keeps things snappy
+        # Configurable timeouts via env for robustness in publication runs
+        read_to = int(os.getenv("OQT_EXPERIMENTAL_READ_TIMEOUT_S", "30"))  # seconds
+        hard_to = int(os.getenv("OQT_EXPERIMENTAL_HARD_TIMEOUT_S", "120"))  # seconds
+        data_timeout = (5, read_to)
         default_limit = DEFAULT_EXPERIMENTAL_RECORD_LIMIT if include_metadata else None
         limit = record_limit if record_limit is not None else default_limit
         if limit is not None and limit <= 0:
@@ -405,6 +417,7 @@ class QSARToolboxAPI:
                     chem_id=chem_id,
                     limit=limit,
                     keep_key_studies=keep_key_studies,
+                    hard_timeout_s=hard_to,
                 )
 
             logger.info(
@@ -439,6 +452,7 @@ class QSARToolboxAPI:
         chem_id: str,
         limit: Optional[int],
         keep_key_studies: bool,
+        hard_timeout_s: int,
     ) -> List[Dict[str, Any]]:
         """Stream metadata-rich experimental data and retain only the needed slice."""
         url = f"{self.base_url}/data/all/{chem_id}"
@@ -471,6 +485,9 @@ class QSARToolboxAPI:
         dropped = 0
         total_seen = 0
         limit_enabled = limit is not None
+
+        import time
+        start_time = time.perf_counter()
 
         try:
             for chunk in response.iter_content(chunk_size=65536, decode_unicode=True):
@@ -523,6 +540,7 @@ class QSARToolboxAPI:
                     total_seen += 1
                     metadata = item.get("MetaData") or []
                     is_key = keep_key_studies and self._metadata_is_key_study(metadata)
+                    item["IsKeyStudy"] = bool(is_key)
 
                     if is_key:
                         kept_key += 1
@@ -535,6 +553,25 @@ class QSARToolboxAPI:
                     else:
                         dropped += 1
 
+                # Hard stop if streaming took too long; return what we have
+                if hard_timeout_s and (time.perf_counter() - start_time) > hard_timeout_s:
+                    logger.warning(
+                        "Experimental data stream for %s reached hard timeout (>%ss). Returning %s records (non-key=%s, key=%s).",
+                        chem_id,
+                        hard_timeout_s,
+                        len(records),
+                        kept_non_key,
+                        kept_key,
+                    )
+                    return records
+
+            if records:
+                logger.warning(
+                    "Experimental data stream for %s terminated unexpectedly after %s records; returning partial dataset.",
+                    chem_id,
+                    len(records),
+                )
+                return records
             raise QSARResponseError(
                 f"Incomplete experimental data stream for {chem_id}: JSON array not terminated."
             )
@@ -872,7 +909,11 @@ class QSARToolboxAPI:
         """
         try:
             result = self._make_request('about/toolbox/version')
-            return result or {}
+            if isinstance(result, dict):
+                return result
+            if isinstance(result, str):
+                return {"Version": result}
+            return {}
         except Exception as e:
             logger.error(f"Error getting Toolbox version: {str(e)}")
             return {}
@@ -884,7 +925,11 @@ class QSARToolboxAPI:
         """
         try:
             result = self._make_request('about/webapi/version')
-            return result or {}
+            if isinstance(result, dict):
+                return result
+            if isinstance(result, str):
+                return {"Version": result}
+            return {}
         except Exception as e:
             logger.error(f"Error getting WebAPI version: {str(e)}")
             return {}
@@ -1131,22 +1176,68 @@ class QSARToolboxAPI:
         self._qsar_model_catalog = catalog
         return catalog
 
-    def apply_qsar_model(self, qsar_guid: str, chem_id: str) -> Dict[str, Any]:
-        """Apply QSAR model to a chemical with applicability domain assessment
-        
-        Returns: {
-            DomainResult: "In|Out|Ambiguous",
-            DomainExplain: ["reason1", ...],
-            Endpoint, RigidPath, Value, Qualifier, Unit, Family, MetaData
-        }
+    def apply_qsar_model(self, qsar_guid: str, chem_id: str, *, timeout: Any = None) -> Dict[str, Any]:
+        """Apply QSAR model with fail-fast retry (avoid long hangs on 500s).
+
+        Returns a normalized dict with applicability domain and value fields.
         Maps to QPRF §4 (Prediction), §6 (Applicability Domain)
         """
-        try:
-            result = self._make_request(f'qsar/apply/{qsar_guid}/{chem_id}')
-            return result or {}
-        except Exception as e:
-            logger.error(f"Error applying QSAR model {qsar_guid} to {chem_id}: {str(e)}")
-            return {}
+        url = f"{self.base_url}/qsar/apply/{qsar_guid}/{chem_id}"
+
+        # Interpret timeout param; default to client timeout
+        effective_timeout = timeout if timeout is not None else self.timeout
+
+        # Perform at most a couple of quick retries on transient 5xx
+        attempts = 0
+        max_attempts = 3
+        backoff_seconds = [0.5, 1.0]  # total ~1.5s extra wait
+
+        while attempts < max_attempts:
+            attempts += 1
+            try:
+                # Bypass the session adapter to avoid built-in status retries
+                resp = requests.get(url, timeout=effective_timeout, headers=self.session.headers)
+                if resp.ok:
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        # Non-JSON payloads are unexpected here; treat as empty
+                        data = {}
+                    return data or {}
+
+                # For 5xx, allow limited manual retries
+                if 500 <= resp.status_code < 600 and attempts < max_attempts:
+                    wait = backoff_seconds[min(attempts - 1, len(backoff_seconds) - 1)]
+                    logger.warning(
+                        "QSAR apply returned %s for %s (attempt %d/%d). Retrying in %.1fs...",
+                        resp.status_code,
+                        url,
+                        attempts,
+                        max_attempts,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+
+                # Other HTTP errors: do not retry
+                logger.error("QSAR apply failed (%s): %s", resp.status_code, url)
+                return {}
+
+            except requests.exceptions.Timeout as e:
+                # Respect per-model timeout; retry once quickly
+                if attempts < max_attempts:
+                    logger.warning("QSAR apply timed out (attempt %d/%d): %s", attempts, max_attempts, e)
+                    continue
+                raise QSARTimeoutError(f"QSAR apply timed out after {attempts} attempts: {e}")
+            except requests.exceptions.ConnectionError as e:
+                if attempts < max_attempts:
+                    logger.warning("QSAR apply connection error (attempt %d/%d): %s", attempts, max_attempts, e)
+                    continue
+                raise QSARConnectionError(f"QSAR apply connection failed after {attempts} attempts: {e}")
+            except requests.exceptions.RequestException as e:
+                logger.error("QSAR apply request failed: %s", e)
+                return {}
+        return {}
 
     def get_qsar_domain(self, qsar_guid: str, chem_id: str) -> str:
         """Get applicability domain assessment for a QSAR prediction

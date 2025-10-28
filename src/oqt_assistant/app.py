@@ -72,6 +72,8 @@ from oqt_assistant.utils.qsar_models import (
     format_qsar_model_label,
 )
 from oqt_assistant.utils.filters import filter_experimental_records # NEW IMPORT
+from oqt_assistant.utils.qprf_enrichment import QPRFEnricher
+from oqt_assistant.utils.key_studies import KeyStudyCollector
 from oqt_assistant.utils.hit_selection import select_hit_with_properties
 
 
@@ -419,7 +421,6 @@ def render_specialist_downloads(identifier: str):
         try:
             # Generate the PDF content (this might take a moment)
             # We rely on the comprehensive_log containing all necessary data (metadata, reports)
-            # MODIFIED: Open-Source version uses the simplified PDF generator.
             pdf_bytes = generate_pdf_report(st.session_state.comprehensive_log)
             
             st.sidebar.download_button(
@@ -428,7 +429,7 @@ def render_specialist_downloads(identifier: str):
                 file_name=f"{identifier}_OQT_Report.pdf",
                 mime="application/pdf",
                 key="comprehensive_pdf_download",
-                help="Download a summary PDF containing the synthesized report and analysis metadata. (Detailed specialist analyses and advanced formatting reserved for O-QT Pro)."
+                help="Download a comprehensive PDF with identity, data provenance, key studies, and agent narratives."
             )
         except Exception as e:
             st.sidebar.error(f"Error generating PDF: {e}")
@@ -517,6 +518,12 @@ def generate_comprehensive_log(
             "synthesized_report": synthesized_report
         }
     }
+    # Attach QPRF metadata if available
+    qprf_meta = processed_qsar_data.get("qprf_metadata", {}) if isinstance(processed_qsar_data, dict) else {}
+    if qprf_meta:
+        log["metadata"]["qprf_software"] = qprf_meta.get("software", {})
+        log["data_retrieval"]["qprf_metadata"] = qprf_meta
+
     return log
 
 
@@ -705,6 +712,21 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
             update_progress(0.4, "📊 Skipping chemical properties (per configuration)...")
             properties = {}
 
+        # --- QPRF/RAAF Metadata Enrichment ---
+        update_progress(0.45, "📋 Enriching with QPRF/RAAF metadata...")
+        software_info: Dict[str, Any] = {}
+        try:
+            enricher = QPRFEnricher(api_client)
+            chemical_data = enricher.enrich_substance_identity(chemical_data)
+            if properties:
+                properties = enricher.enrich_calculator_results(properties)
+            software_info = enricher.get_software_info()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("QPRF enrichment failed (non-critical): %s", exc)
+            software_info = {}
+
+        st.session_state.qprf_software_info = software_info
+
 
         
         # --- Experimental Data Retrieval (Conditional based on scope_config) ---
@@ -799,7 +821,11 @@ def perform_chemical_analysis(identifier: str, search_type: str, context: str, s
                 'raw': raw_qsar,
                 'processed': qsar_processed,
             },
-            'context': context
+            'context': context,
+            'qprf_metadata': {
+                'software': software_info,
+                'enrichment_applied': bool(software_info)
+            }
         }
         return results
 
@@ -1112,6 +1138,16 @@ async def execute_analysis_async(identifier: str, search_type: str, context: str
 
             # Process metadata (Properties and Basic Info are already processed in perform_chemical_analysis)
             processed_experimental_data = process_experimental_metadata(results.get('experimental_data', []))
+
+            # Enrich experimental records with provenance metadata
+            try:
+                api_for_provenance = QSARToolboxAPI(base_url=qsar_config.get('api_url'))
+                collector = KeyStudyCollector(api_for_provenance)
+                processed_experimental_data = collector.enrich_experimental_records(processed_experimental_data)
+                results['experimental_data'] = processed_experimental_data
+                logger.info("Enriched experimental records with key study provenance.")
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning("Failed to enrich experimental data with key study info: %s", exc)
             
             # Apply filters based on scope_config
             if scope_config:
@@ -1539,6 +1575,13 @@ def render_standard_mode():
 
             if "qsar_selected_labels" not in st.session_state or not st.session_state.qsar_selected_labels:
                 st.session_state.qsar_selected_labels = recommended_labels.copy()
+            else:
+                # Ensure stored selections remain valid against current options
+                valid_saved = [label for label in st.session_state.qsar_selected_labels if label in labels]
+                if not valid_saved and recommended_labels:
+                    valid_saved = recommended_labels.copy()
+                if st.session_state.qsar_selected_labels != valid_saved:
+                    st.session_state.qsar_selected_labels = valid_saved
 
             with st.expander("Select QSAR models", expanded=False):
                 col_rec, col_all, col_clear = st.columns(3)

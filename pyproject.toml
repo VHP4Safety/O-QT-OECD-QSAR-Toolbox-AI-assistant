@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oqt-assistant"
-version = "0.9.0"
+version = "1.0.0"
 authors = [
     { name="Ivo Djidrovski", email="i.djidrovski@uu.nl" },
 ]
 description = "Multi-Agent Chemical Analysis using OECD QSAR Toolbox API and LLMs."
 readme = "README.md"
 license = { file="LICENSE" }
-requires-python = ">=3.8"
+requires-python = ">=3.10,<4.0"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
@@ -39,6 +39,7 @@ dependencies = [
     "PyYAML>=5.4,<7.0.0", # Ensure PyYAML is present
     "reportlab>=4.0.0,<5.0.0", # For PDF generation
     "py3dmol>=2.5.3,<3.0.0",
+    "rdkit-pypi>=2022.9.1", # For 2D depictions and 3D embedding
 ]
 
 [project.urls]

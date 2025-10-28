@@ -34,8 +34,8 @@ ENV/
 *.swo
 
 # OS specific files
-.DS_Store
 Thumbs.db
+.DS_Store
 
 # Data files
 *.csv
@@ -55,3 +55,8 @@ cleanup_summary.md
 # Key files
 key
 key.pub
+
+# Generated experiments & release artifacts
+runs/
+Zenodo_release/
+Zenodo_release.zip

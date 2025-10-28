@@ -133,7 +133,7 @@ def async_lru_cache(maxsize=128):
     return decorator
 
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from .data_formatter import safe_json
@@ -210,8 +210,8 @@ def get_prompt(key: str, prompt_type: str = "system") -> str:
 
 # --- LLM Initialization (UPDATED: Uses get_llm for GPT-5 support) ---
 
-def initialize_llm(llm_config: Dict[str, Any], timeout: float = 120.0) -> ChatOpenAI:
-    """Initializes and returns the LangChain ChatOpenAI instance based on provided config."""
+def initialize_llm(llm_config: Dict[str, Any], timeout: float = 120.0) -> BaseChatModel:
+    """Initializes and returns the LangChain chat model based on provided config."""
     
     # Import get_llm function
     from .llm_provider import get_llm
@@ -262,13 +262,19 @@ def initialize_llm(llm_config: Dict[str, Any], timeout: float = 120.0) -> ChatOp
         os.environ["OPENAI_API_KEY"] = api_key
 
     # Use the updated get_llm function that handles GPT-5 parameters correctly
-    llm = get_llm(
-        provider=llm_provider,
-        model=model_id,
-        temperature=temperature,
-        max_output_tokens=max_tokens,
-        reasoning_effort=reasoning_effort
-    )
+    try:
+        llm = get_llm(
+            provider=llm_provider,
+            model=model_id,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            api_key=api_key,
+            timeout=timeout,
+        )
+    except Exception as e:
+        logger.error(f"Primary LLM init failed, switching to fallback generator: {e}")
+        llm = _FallbackChat()
 
     # Set additional properties that get_llm doesn't handle
     if hasattr(llm, 'max_retries'):
@@ -315,9 +321,62 @@ async def _invoke_chain(chain, input_dict, agent_name: str) -> str:
     except Exception as e:
         # Catch exceptions during invocation (e.g., API errors, timeouts within LangChain)
         logger.error(f"Error during invocation of {agent_name}: {e}", exc_info=True)
-        # Re-raise the exception so the calling function (e.g., execute_analysis_async in app.py)
-        # can handle it globally (e.g., generate fallback report, display auth errors).
-        raise e
+        # Fallback: try direct OpenAI call to generate some content
+        try:
+            prompt = _build_fallback_prompt(agent_name, input_dict)
+            text = _fallback_openai_generate(prompt)
+            if text:
+                return text.strip()
+        except Exception as inner:
+            logger.error(f"Fallback OpenAI generation failed for {agent_name}: {inner}")
+        # Final minimal placeholder
+        return f"[{agent_name}: Content not available due to LLM error.]"
+
+# --- Lightweight Fallback Utilities ---
+def _build_fallback_prompt(agent_name: str, input_dict: Dict[str, Any]) -> str:
+    ctx = input_dict.get("context") or ""
+    # Find any JSON-like field
+    payload = None
+    for k in ("data_json", "experimental_results", "qsar_processed", "profiling", "metabolism"):
+        if k in input_dict and input_dict[k]:
+            payload = input_dict[k]
+            break
+    if isinstance(payload, (dict, list)):
+        try:
+            payload = json.dumps(payload, ensure_ascii=False)[:4000]
+        except Exception:
+            payload = str(payload)[:4000]
+    else:
+        payload = str(payload)[:4000] if payload else ""
+    return (
+        f"You are the {agent_name} for a QSAR/QPRF report.\n"
+        f"Context: {ctx}\n"
+        f"Input data (JSON or text, truncated):\n{payload}\n\n"
+        f"Write a concise, factual section suitable for the report. Use bullets where natural."
+    )
+
+
+def _fallback_openai_generate(prompt: str, model: str = None, max_output_tokens: int = 800) -> str:
+    """Use OpenAI Responses API directly to get a text generation, bypassing LangChain.
+
+    Respects OPENAI_API_KEY in the environment. Chooses a stable default model if not provided.
+    """
+    from openai import OpenAI
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set for fallback generation")
+    client = OpenAI(api_key=api_key)
+    mdl = (model or os.environ.get("OQT_FALLBACK_OPENAI_MODEL") or "gpt-4o-mini")
+    try:
+        resp = client.responses.create(model=mdl, input=prompt, max_output_tokens=max_output_tokens)
+        out = getattr(resp, 'output_text', None)
+        if not out and getattr(resp, 'choices', None):
+            # Defensive for older SDKs
+            choice0 = resp.choices[0] if resp.choices else None
+            out = getattr(getattr(choice0, 'message', None), 'content', None) if choice0 else None
+        return out or ""
+    except Exception as e:
+        raise RuntimeError(f"OpenAI fallback call failed: {e}")
 
 
 # --- Specialist Agent Functions (MODIFIED to use _invoke_chain) ---
@@ -337,12 +396,15 @@ async def analyze_chemical_context(chemical_data: Dict[str, Any], context: str, 
     system_prompt = get_prompt("chem_context", "system")
     user_template = get_prompt("chem_context", "user")
 
+    input_dict = {"context": context, "data_json": data_json}
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("Chemical Context Agent", input_dict))
+
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", user_template)
     ])
     chain = prompt_template | llm | output_parser
-    input_dict = {"context": context, "data_json": data_json}
     
     # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Chemical Context Agent")
@@ -360,12 +422,15 @@ async def analyze_physical_properties(data: Dict[str, Any], context: str, llm_co
     system_prompt = get_prompt("phys_props", "system")
     user_template = get_prompt("phys_props", "user")
 
+    input_dict = {"context": context, "data_json": data_json}
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("Physical Properties Agent", input_dict))
+
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", user_template)
     ])
     chain = prompt_template | llm | output_parser
-    input_dict = {"context": context, "data_json": data_json}
     
     # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Physical Properties Agent")
@@ -382,12 +447,15 @@ async def analyze_environmental_fate(data: Dict[str, Any], context: str, llm_con
     system_prompt = get_prompt("env_fate", "system")
     user_template = get_prompt("env_fate", "user")
 
+    input_dict = {"context": context, "data_json": data_json}
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("Environmental Fate Agent", input_dict))
+
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", user_template)
     ])
     chain = prompt_template | llm | output_parser
-    input_dict = {"context": context, "data_json": data_json}
     
     # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Environmental Fate Agent")
@@ -404,12 +472,15 @@ async def analyze_profiling_reactivity(data: Dict[str, Any], context: str, llm_c
     system_prompt = get_prompt("profiling_reactivity", "system")
     user_template = get_prompt("profiling_reactivity", "user")
 
+    input_dict = {"context": context, "data_json": data_json}
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("Profiling/Reactivity Agent", input_dict))
+
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", user_template)
     ])
     chain = prompt_template | llm | output_parser
-    input_dict = {"context": context, "data_json": data_json}
     
     # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Profiling/Reactivity Agent")
@@ -450,12 +521,15 @@ async def analyze_experimental_data(data: Dict[str, Any], context: str, llm_conf
     system_prompt = get_prompt("experimental_data", "system")
     user_template = get_prompt("experimental_data", "user")
 
+    input_dict = {"context": context, "data_json": data_json}
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("Experimental Data Agent", input_dict))
+
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", user_template)
     ])
     chain = prompt_template | llm | output_parser
-    input_dict = {"context": context, "data_json": data_json}
     
     response = await _invoke_chain(chain, input_dict, "Experimental Data Agent")
     return response
@@ -492,12 +566,15 @@ async def analyze_metabolism(data: Dict[str, Any], context: str, llm_config: Dic
     system_prompt = get_prompt("metabolism", "system")
     user_template = get_prompt("metabolism", "user")
 
+    input_dict = {"context": context, "data_json": data_json}
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("Metabolism Agent", input_dict))
+
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", user_template)
     ])
     chain = prompt_template | llm | output_parser
-    input_dict = {"context": context, "data_json": data_json}
     
     # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Metabolism Agent")
@@ -519,13 +596,15 @@ async def analyze_qsar_predictions(data: Dict[str, Any], context: str, llm_confi
 
     system_prompt = get_prompt("qsar_predictions", "system")
     user_template = get_prompt("qsar_predictions", "user")
+    input_dict = {"context": context, "data_json": data_json}
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("QSAR Predictions Agent", input_dict))
 
     prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", user_template)
     ])
     chain = prompt_template | llm | output_parser
-    input_dict = {"context": context, "data_json": data_json}
 
     response = await _invoke_chain(chain, input_dict, "QSAR Predictions Agent")
     return response
@@ -584,6 +663,9 @@ async def analyze_read_across(results: Dict[str, Any], specialist_outputs: List[
         try:
             # Initialize LLM with custom timeout
             llm = initialize_llm(llm_config, timeout=strategy["timeout"])
+            # If fallback LLM is active, skip LCEL chain and generate directly
+            if isinstance(llm, _FallbackChat):
+                return _fallback_openai_generate(_build_fallback_prompt("Read Across Agent", input_dict))
             chain = prompt_template | llm | output_parser
 
             # Add asyncio timeout AND use robust helper
@@ -655,18 +737,49 @@ async def synthesize_report(chemical_identifier: str, specialist_outputs: List[s
     system_prompt = get_prompt("synthesizer", "system")
     user_template = get_prompt("synthesizer", "user")
 
-    prompt_template = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", user_template)
-    ])
-    chain = prompt_template | llm | output_parser
     input_dict = {
         "chemical_identifier": chemical_identifier,
         "context": context,
         "combined_specialist_text": combined_specialist_text,
         "read_across_report": read_across_report
     }
+    if isinstance(llm, _FallbackChat):
+        return _fallback_openai_generate(_build_fallback_prompt("Synthesizer Agent", input_dict))
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", user_template)
+    ])
+    chain = prompt_template | llm | output_parser
     
     # Use the robust helper
     response = await _invoke_chain(chain, input_dict, "Synthesizer Agent")
     return response
+class _FallbackChat:
+    """Minimal async-compatible LLM for LCEL chains using direct OpenAI calls."""
+    max_retries = 1
+    request_timeout = 60
+
+    async def ainvoke(self, prompt_value, **kwargs):  # noqa: D401
+        # Extract text from LangChain prompt value or list of messages
+        try:
+            if hasattr(prompt_value, 'to_messages'):
+                messages = prompt_value.to_messages()
+            elif isinstance(prompt_value, list):
+                messages = prompt_value
+            else:
+                messages = [prompt_value]
+            parts = []
+            for m in messages:
+                content = getattr(m, 'content', None)
+                if isinstance(content, list):
+                    content = ' '.join([c.get('text', '') if isinstance(c, dict) else str(c) for c in content])
+                if not content and isinstance(m, str):
+                    content = m
+                if content:
+                    parts.append(str(content))
+            prompt = '\n\n'.join(parts)
+        except Exception:
+            prompt = str(prompt_value)
+
+        # Use the same fallback generator
+        return _fallback_openai_generate(prompt)
