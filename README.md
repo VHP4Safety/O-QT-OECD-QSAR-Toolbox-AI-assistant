@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17468969.svg)](https://doi.org/10.5281/zenodo.17468969)
+
 ![O-QT Logo](o-qt_logo.png)
 
 # 🧪 O-QT: The OECD QSAR Toolbox AI Assistant
@@ -32,19 +34,32 @@ Therefore, manual installation and API activation by each user on a Windows mach
 
 ### Features
 
-* Chemical search by name or SMILES notation.
-* Retrieval of physicochemical properties, experimental data, and chemical profiling information.
-* Downloadable raw data (JSON, CSV) and synthesized AI reports (PDF, TXT).
-* Advanced AI Analysis: A team of specialized AI agents analyzes the data:
-    * Chemical Context: Confirms the chemical's identity.
-    * Physical Properties: Analyzes physical characteristics.
-    * Environmental Fate: Evaluates environmental behavior.
-    * Profiling/Reactivity: Assesses reactivity and toxicological alerts.
-    * Experimental Data: Interprets measured experimental results.
-    * Metabolism: Analyzes predicted metabolites from simulators.
-    * QSAR Predictions: Interprets in-domain QSAR model results.
-    * Read-Across: Identifies data gaps and suggests analogue strategies.
-    * Synthesis: Combines all analyses into a final, coherent report.
+* Chemical search by name, CAS, or SMILES with automatic hit ranking.
+* Retrieval of physicochemical properties, experimental data, metabolism simulators, profiler alerts, and curated QSAR catalog metadata.
+* QPRF/RAAF enrichment: IUCLID lookups, calculator provenance, database catalog metadata, and key-study annotations for experimental records.
+* Interactive visualization: inline 2D depictions plus 3D molecular preview (py3Dmol) when SMILES are available.
+* Downloadable raw data (JSON, CSV) alongside publication-ready PDF and text reports.
+* Curated QSAR presets based on the O-QT Pro catalogue with heuristics to avoid ultra-slow models.
+* Advanced AI Analysis: a team of specialist LangChain agents orchestrated to cover every aspect of hazard assessment:
+    * Chemical Context – confirms identity and regulatory identifiers.
+    * Physical Properties – interprets experimental and calculator values with provenance labels.
+    * Environmental Fate – evaluates persistence, mobility, and bioaccumulation signals.
+    * Profiling/Reactivity – summarizes structural alerts and mechanistic flags.
+    * Experimental Data – ranks key studies, parses metadata, and highlights evidence gaps.
+    * Metabolism – analyses simulator outputs and metabolite coverage.
+    * QSAR Predictions – filters for in-domain models, summarising runtime and donors.
+    * Read-Across – produces evidence vs. gap matrices and analogue suggestions tailored to scope.
+    * Synthesis – produces a structured, publication-grade report referencing all provenance tags.
+
+---
+
+### What's New in v1.0.0
+
+* Complete alignment with the closed-source O-QT Pro workflow (QPRF metadata, curated QSAR presets, IUCLID enrichment, 3D preview).
+* Redesigned prompt pack enforcing structured “assertions” blocks for every specialist agent.
+* Publication-ready PDF generator with key study coverage badge, provenance tables, and logo support.
+* Streamlined tests using lightweight LangChain shims so the suite runs without live OpenAI calls.
+* Reproducible dependency lock via Poetry (`poetry.lock`) and Python ≥3.10 support.
 
 ---
 
@@ -142,6 +157,24 @@ oqt-assistant
 Then, access the application in your browser at http://localhost:8501.
 
 -----
+
+### Testing
+
+We recommend using Poetry for local development. After installing dependencies:
+
+```bash
+poetry run pytest
+```
+
+This exercises the full suite, including Streamlit stubs and LangChain agent orchestration.
+
+### Citation
+
+If you use the O-QT Assistant in academic or regulatory work, please cite the Zenodo record and manuscript under review:
+
+> I. Djidrovski, *O-QT Assistant: A Multi-Agent AI System for Streamlined Chemical Hazard Assessment and Read-Across Analysis using the OECD QSAR Toolbox API*, Zenodo (2025). DOI: [10.5281/zenodo.17468969](https://doi.org/10.5281/zenodo.17468969)
+
+The Zenodo archive mirrors the v1.0.0 GitHub release and includes all figures accompanying the paper.
 
 ### How to Use the Assistant
 
