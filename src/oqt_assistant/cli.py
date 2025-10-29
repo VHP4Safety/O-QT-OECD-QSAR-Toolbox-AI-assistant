@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
 
 def _run_streamlit(ui_args: List[str]) -> int:
     """Launch the Streamlit UI in the current Python environment."""
@@ -40,11 +40,11 @@ class _SessionState(dict):
 
 
 class _ProgressBar:
-    def __init__(self, value: float = 0.0, text: str | None = None) -> None:
+    def __init__(self, value: float = 0.0, text: Optional[str] = None) -> None:
         self.value = value
         self.text = text
 
-    def progress(self, value: float, text: str | None = None) -> "_ProgressBar":
+    def progress(self, value: float, text: Optional[str] = None) -> "_ProgressBar":
         self.value = value
         self.text = text
         msg = text or ""
@@ -78,7 +78,7 @@ class _Sidebar:
     def text_input(self, *args, value: str = "", **kwargs) -> str:
         return value
 
-    def number_input(self, *args, value: float | int = 0, **kwargs) -> float | int:
+    def number_input(self, *args, value: Union[float, int] = 0, **kwargs) -> Union[float, int]:
         return value
 
     def expander(self, *args, **kwargs):
@@ -95,7 +95,7 @@ class _Sidebar:
             def caption(self_inner, *args, **kwargs):
                 return None
 
-            def number_input(self_inner, *args, value: float | int = 0, **kwargs):
+            def number_input(self_inner, *args, value: Union[float, int] = 0, **kwargs):
                 return value
 
         return _Context()
@@ -148,7 +148,7 @@ class _StreamlitCLIStub:
     def download_button(self, *args, **kwargs) -> None:
         return None
 
-    def progress(self, value: float = 0.0, text: str | None = None) -> _ProgressBar:
+    def progress(self, value: float = 0.0, text: Optional[str] = None) -> _ProgressBar:
         return _ProgressBar(value, text)
 
     def rerun(self) -> None:
@@ -335,7 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
