@@ -63,6 +63,39 @@ Therefore, manual installation and API activation by each user on a Windows mach
 
 ---
 
+### Quickstart
+
+![O-QT Streamlit UI](o-qt_logo.png)
+
+1. **Clone and install with Poetry**
+   ```bash
+   git clone https://github.com/VHP4Safety/O-QT-OECD-QSAR-Toolbox-AI-assistant.git
+   cd O-QT-OECD-QSAR-Toolbox-AI-assistant
+   poetry install
+   ```
+2. **Copy the example environment file**
+   ```bash
+   cp .env.example .env
+   ```
+   Fill in your `QSAR_TOOLBOX_API_URL` (the running OECD QSAR Toolbox) and your LLM key (`OPENAI_API_KEY` or `OPENROUTER_API_KEY`).
+3. **Choose how you want to run it**
+   - **Streamlit UI** – launch the full interface:
+     ```bash
+     poetry run streamlit run src/oqt_assistant/app.py
+     ```
+     The UI opens at http://localhost:8501. Reports and downloads are available from the sidebar.
+   - **Headless CLI** – run a single analysis and capture artifacts:
+     ```bash
+     poetry run oqt-assistant analyze "Acetone" \
+       --search-type name \
+       --context "Quick CLI smoke test"
+     ```
+     Outputs (JSON log, Markdown narrative, PDF report) land in `cli_runs/Acetone_*`. Set `--output-dir` to redirect elsewhere.
+
+> Tip: Set `QSAR_TOOLBOX_API_URL` in `.env` (or your shell) once and you can omit `--api-url` on subsequent CLI runs.
+
+---
+
 ### Installation and Usage Guide
 
 #### Method 1: Docker (Recommended)
