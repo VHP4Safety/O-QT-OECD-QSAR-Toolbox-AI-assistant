@@ -168,6 +168,27 @@ poetry run pytest
 
 This exercises the full suite, including Streamlit stubs and LangChain agent orchestration.
 
+### Command-line Usage
+
+In addition to the Streamlit UI, you can run headless analyses via the CLI once the package is installed (locally or inside the Docker container):
+
+```bash
+oqt-assistant analyze "Acetone" \
+  --search-type name \
+  --context "General hazard assessment" \
+  --api-url http://13.50.204.132:8804/api/v6 \
+  --output-dir cli_runs/acetone
+```
+
+Key options:
+
+- `--simulator GUID` / `--simulator-all` to execute metabolism simulators.
+- `--profiler GUID` / `--profiler-all` to include profiling suites.
+- `--qsar-mode {recommended,all,none}` or `--qsar-guid GUID` to fine-tune the QSAR models executed.
+- Override the LLM provider/model with `--provider`, `--model-name`, `--temperature`, etc., or rely on environment variables (`OPENAI_API_KEY`, `QSAR_TOOLBOX_API_URL`).
+
+Outputs (JSON log, Markdown report, and PDF) are written to the directory passed via `--output-dir`.
+
 ### Citation
 
 If you use the O-QT Assistant in academic or regulatory work, please cite the Zenodo record and manuscript under review:
