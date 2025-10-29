@@ -98,3 +98,20 @@ def test_cli_analyze_tmpdir(monkeypatch, tmp_path: Path):
 
     data = json.loads(log_path.read_text())
     assert data["analysis"]["synthesized_report"] == "Report body"
+
+
+def test_package_main_delegates(monkeypatch):
+    """Running python -m oqt_assistant should reuse the CLI entry point."""
+
+    calls = {}
+
+    def fake_main(argv=None):
+        calls["argv"] = argv
+        return 5
+
+    monkeypatch.setattr("oqt_assistant.cli.main", fake_main)
+
+    from oqt_assistant import __main__ as package_main
+
+    assert package_main.main(["demo"]) == 5
+    assert calls["argv"] == ["demo"]

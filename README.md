@@ -213,6 +213,12 @@ oqt-assistant analyze "Acetone" \
   --output-dir cli_runs/acetone
 ```
 
+If you installed the package with plain `pip`, you can run the same command with `python -m`:
+
+```bash
+python -m oqt_assistant.cli analyze "Acetone" --context "General hazard assessment"
+```
+
 Key options:
 
 - `--simulator GUID` / `--simulator-all` to execute metabolism simulators.
