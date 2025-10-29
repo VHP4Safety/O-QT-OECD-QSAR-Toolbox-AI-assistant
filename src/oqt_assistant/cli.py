@@ -283,7 +283,13 @@ def _run_cli_analysis(args) -> int:
     print(f"Saved synthesized report to {report_path}")
 
     try:
-        pdf_bytes = generate_pdf_report(log_data)
+        pdf_payload = generate_pdf_report(log_data)
+        if hasattr(pdf_payload, "getvalue"):
+            pdf_bytes = pdf_payload.getvalue()
+        elif isinstance(pdf_payload, (bytes, bytearray, memoryview)):
+            pdf_bytes = bytes(pdf_payload)
+        else:
+            raise TypeError(f"Unexpected PDF payload type: {type(pdf_payload)!r}")
         pdf_path = output_dir / f"{safe_identifier}_report.pdf"
         pdf_path.write_bytes(pdf_bytes)
         print(f"Saved PDF report to {pdf_path}")

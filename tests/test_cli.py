@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -67,7 +68,9 @@ def test_cli_analyze_tmpdir(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr("oqt_assistant.utils.qsar_api.QSARToolboxAPI", FakeQSAR)
     monkeypatch.setattr("oqt_assistant.utils.qsar_models.derive_recommended_qsar_models", fake_recommended)
-    monkeypatch.setattr("oqt_assistant.utils.pdf_generator.generate_pdf_report", lambda data: b"%PDF-1.4")
+    monkeypatch.setattr(
+        "oqt_assistant.utils.pdf_generator.generate_pdf_report", lambda data: io.BytesIO(b"%PDF-1.4")
+    )
     import oqt_assistant.app as app_module
     monkeypatch.setattr(cli, "app", app_module, raising=False)
     monkeypatch.setattr(app_module, "execute_analysis_async", AsyncMock(side_effect=fake_execute))
