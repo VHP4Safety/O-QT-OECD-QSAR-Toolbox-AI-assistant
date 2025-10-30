@@ -31,6 +31,23 @@ def test_cli_main_ui(monkeypatch):
     assert called["args"] == []
 
 
+def test_cli_main_default_invocation(monkeypatch):
+    """Running CLI with no args should default to UI command."""
+
+    called = {}
+
+    def fake_run_streamlit(args):
+        called["args"] = args
+        return 0
+
+    monkeypatch.setattr(cli, "_run_streamlit", fake_run_streamlit)
+
+    exit_code = cli.main([])
+
+    assert exit_code == 0
+    assert called["args"] == []
+
+
 def test_cli_analyze_tmpdir(monkeypatch, tmp_path: Path):
     """CLI analyze command should write log, markdown, and PDF outputs."""
 

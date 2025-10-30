@@ -346,7 +346,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "ui":
-        streamlit_args = args.streamlit_args or []
+        streamlit_args = getattr(args, "streamlit_args", None) or []
         return _run_streamlit(streamlit_args)
 
     if args.command == "analyze":
