@@ -1689,18 +1689,25 @@ def render_standard_mode():
 
 # UPDATED: main is synchronous
 def main():
+    logo_candidates = [
+        "o-qt_logo.jpg",
+        "o-qt_logo.png",
+        "logo.jpg",
+        "logo.png",
+    ]
+    sidebar_logo = next((path for path in logo_candidates if os.path.exists(path)), None)
+
     st.set_page_config(
         page_title="O-QT Assistant",
-        page_icon="o-qt_logo.jpg",
+        page_icon=sidebar_logo or "🧪",
         layout="wide"
     )
 
     initialize_session_state()
 
     # Display the logo at the top of the sidebar
-    logo_path = "o-qt_logo.jpg"
-    if os.path.exists(logo_path):
-        st.sidebar.image(logo_path, width="stretch")
+    if sidebar_logo:
+        st.sidebar.image(sidebar_logo, use_column_width=True)
 
     # Mode selection positioned directly under the logo
     # Determine index based on whether a wizard session is active
