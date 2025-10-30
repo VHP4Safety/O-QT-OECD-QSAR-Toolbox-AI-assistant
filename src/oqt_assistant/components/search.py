@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import streamlit as st
-from typing import Tuple, List
+from typing import Tuple, List, Optional, Dict, Any
 
 # New imports
 from oqt_assistant.utils.qsar_api import QSARToolboxAPI, SearchOptions  # already in project
@@ -47,6 +47,57 @@ def handle_individual_checkbox(endpoint):
     # If an item is unchecked, uncheck "Select All"
     if not is_checked:
         st.session_state.select_all_endpoints = False
+
+
+def _extract_smiles_from_hit(hit: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(hit, dict):
+        return None
+
+    candidates = [
+        hit.get("SMILES"),
+        hit.get("Smiles"),
+        hit.get("CanonicalSmiles"),
+        hit.get("canonicalSmiles"),
+        hit.get("PreferredSMILES"),
+    ]
+    for value in candidates:
+        if value:
+            return value
+
+    for key in ("Structure", "structure", "PreferredStructure"):
+        nested = hit.get(key)
+        if isinstance(nested, dict):
+            for nested_key in ("SMILES", "Smiles", "CanonicalSmiles", "canonicalSmiles"):
+                value = nested.get(nested_key)
+                if value:
+                    return value
+    return None
+
+
+def _resolve_smiles_from_session() -> Optional[str]:
+    results = st.session_state.get("analysis_results")
+    if isinstance(results, dict):
+        basic = results.get("chemical_data", {}).get("basic_info", {})
+        for key in ("SMILES", "Smiles", "canonical_smiles", "CanonicalSMILES"):
+            value = basic.get(key)
+            if value:
+                return value
+
+    log_data = st.session_state.get("comprehensive_log")
+    if isinstance(log_data, dict):
+        identity = log_data.get("analysis", {}).get("chemical_identity")
+        if isinstance(identity, dict):
+            for key in ("smiles", "SMILES", "canonical_smiles"):
+                value = identity.get(key)
+                if value:
+                    return value
+        inputs = log_data.get("inputs")
+        if isinstance(inputs, dict):
+            for key in ("smiles", "SMILES"):
+                value = inputs.get(key)
+                if value:
+                    return value
+    return None
 
 
 def render_search_section() -> Tuple[str, str, str]:
@@ -96,13 +147,32 @@ def render_search_section() -> Tuple[str, str, str]:
         with st.expander("3D Preview (optional)"):
             if st.button("Preview structure"):
                 try:
-                    if search_type == 'smiles':
-                        if identifier:
-                            render_smiles_3d(identifier)
-                        else:
-                            st.info("Enter a SMILES above to preview here, or run the analysis and open the 3D preview under ‘Chemical Data’.")
+                    if not identifier:
+                        st.info("Enter a chemical identifier above before requesting the preview.")
+                    elif search_type == 'smiles':
+                        render_smiles_3d(identifier)
                     else:
-                        st.info("3D preview is only available when searching by SMILES. Switch the search type to SMILES or run the analysis first.")
+                        smiles = _resolve_smiles_from_session()
+                        if not smiles:
+                            api_url = st.session_state.qsar_config.get('api_url') if 'qsar_config' in st.session_state else None
+                            if not api_url:
+                                st.info("Configure the QSAR Toolbox API in the sidebar to preview structures by name or CAS.")
+                            else:
+                                api_client = QSARToolboxAPI(base_url=api_url, timeout=(5, 15))
+                                with st.spinner("Fetching structure from QSAR Toolbox..."):
+                                    if search_type == 'name':
+                                        hits = api_client.search_by_name(identifier, search_option=SearchOptions.EXACT_MATCH)
+                                    else:
+                                        hits = api_client.search_by_cas(identifier)
+                                smiles = None
+                                for hit in hits or []:
+                                    smiles = _extract_smiles_from_hit(hit)
+                                    if smiles:
+                                        break
+                        if smiles:
+                            render_smiles_3d(smiles)
+                        else:
+                            st.info("Could not retrieve a SMILES representation. Run the analysis first to populate structure information.")
                 except Exception as e:
                     st.warning(f"3D preview unavailable: {e}")
 
