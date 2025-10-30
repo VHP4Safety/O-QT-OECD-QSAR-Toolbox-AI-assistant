@@ -65,8 +65,6 @@ Therefore, manual installation and API activation by each user on a Windows mach
 
 ### Quickstart
 
-![O-QT Streamlit UI](o-qt_logo.png)
-
 1. **Clone and install with Poetry**
    ```bash
    git clone https://github.com/VHP4Safety/O-QT-OECD-QSAR-Toolbox-AI-assistant.git
