@@ -1643,7 +1643,7 @@ def render_standard_mode():
                  st.session_state.connection_status = False
 
         if not identifier:
-            st.error("Please enter a chemical name or SMILES notation.")
+            st.error("Please enter a chemical name, CAS number, or SMILES notation.")
         elif not is_ready_to_analyze:
              st.error("Configuration incomplete. Please ensure QSAR Toolbox URL and LLM API Key are provided in the sidebar.")
         elif st.session_state.connection_status is False:

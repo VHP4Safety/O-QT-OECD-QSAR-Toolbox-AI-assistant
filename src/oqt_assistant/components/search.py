@@ -64,9 +64,13 @@ def render_search_section() -> Tuple[str, str, str]:
         # Search type selection
         search_type = st.radio(
             "Search By",
-            options=['name', 'smiles'],
-            format_func=lambda x: "Chemical Name" if x == 'name' else "SMILES Notation",
-            help="Select how you want to identify the chemical."
+            options=['name', 'cas', 'smiles'],
+            format_func=lambda x: {
+                'name': "Chemical Name",
+                'cas': "CAS Number",
+                'smiles': "SMILES Notation",
+            }[x],
+            help="Select how you want to identify the chemical (exact name, CAS number, or SMILES)."
         )
         
         # Dynamic input field based on search type
@@ -75,6 +79,12 @@ def render_search_section() -> Tuple[str, str, str]:
                 "Chemical Name (Exact Match)",
                 placeholder="e.g., 1,1-diethoxyheptane",
                 help="Enter the exact name of the chemical. The system currently uses exact matching via the QSAR Toolbox API. Case study chemical '1,1-diethoxyheptane' is provided as an example."
+            )
+        elif search_type == 'cas':
+            identifier = st.text_input(
+                "CAS Registry Number",
+                placeholder="e.g., 67-56-1",
+                help="Enter a valid CAS Registry Number (format: XX-XX-X). Hyphens are optional but recommended."
             )
         else:
             identifier = st.text_input(
@@ -86,11 +96,13 @@ def render_search_section() -> Tuple[str, str, str]:
         with st.expander("3D Preview (optional)"):
             if st.button("Preview structure"):
                 try:
-                    # If user typed a SMILES, render it here; otherwise guide them to run the search.
-                    if search_type == 'smiles' and identifier:
-                        render_smiles_3d(identifier)
+                    if search_type == 'smiles':
+                        if identifier:
+                            render_smiles_3d(identifier)
+                        else:
+                            st.info("Enter a SMILES above to preview here, or run the analysis and open the 3D preview under ‘Chemical Data’.")
                     else:
-                        st.info("Enter a SMILES above to preview here, or run the analysis and open the 3D preview under ‘Chemical Data’.")
+                        st.info("3D preview is only available when searching by SMILES. Switch the search type to SMILES or run the analysis first.")
                 except Exception as e:
                     st.warning(f"3D preview unavailable: {e}")
 
