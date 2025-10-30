@@ -1707,7 +1707,7 @@ def main():
 
     # Display the logo at the top of the sidebar
     if sidebar_logo:
-        st.sidebar.image(sidebar_logo, use_column_width=True)
+        st.sidebar.image(sidebar_logo, use_container_width=True)
 
     # Mode selection positioned directly under the logo
     # Determine index based on whether a wizard session is active
