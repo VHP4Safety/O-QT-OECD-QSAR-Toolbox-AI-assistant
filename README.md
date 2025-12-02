@@ -8,7 +8,7 @@ O-QT is a multi-agent AI system that connects to your local OECD QSAR Toolbox in
 
 The application uses a team of specialized LangChain and OpenAI-powered agents to interpret data fetched from the OECD QSAR Toolbox WebAPI, providing a seamless workflow from chemical search to final report.
 
-![QSAR Workflow Diagram](qsar-workflow.svg)
+![QSAR Workflow Diagram](<O-QT Assisstant.jpg>)
 
 ---
 
