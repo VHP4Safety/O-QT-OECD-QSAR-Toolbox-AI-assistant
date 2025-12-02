@@ -1,8 +1,10 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17468969.svg)](https://doi.org/10.5281/zenodo.17468969)
 
-![O-QT Logo](o-qt_logo.png)
-
 # 🧪 O-QT: The OECD QSAR Toolbox AI Assistant
+
+<p align="center">
+  <img src="o-qt_logo.png" alt="O-QT logo" width="220">
+</p>
 
 O-QT is a multi-agent AI system that connects to your local OECD QSAR Toolbox installation. It automates the process of chemical analysis, hazard assessment, and read-across strategy development, producing comprehensive, auditable reports.
 
