@@ -438,7 +438,7 @@ def _step_2_chemical_identification():
         submitted = st.form_submit_button(
             "Next: Context & Goals →",
             type="primary",
-            use_container_width=True,
+            width='stretch',
         )
     if submitted:
         errors = _validate_step_2(d)
@@ -466,7 +466,7 @@ def _step_3_analysis_context():
         submitted = st.form_submit_button(
             "Next: Scope & Methods →",
             type="primary",
-            use_container_width=True,
+            width='stretch',
         )
     if submitted:
         d["case_label"] = case_label.strip()
@@ -729,7 +729,7 @@ def _step_4_scope_methodology():
         next_submitted = st.form_submit_button(
             "Next: Read-Across →",
             type="primary",
-            use_container_width=True,
+            width='stretch',
         )
 
     if next_submitted:
@@ -782,7 +782,7 @@ def _step_5_read_across_strategy():
         submitted = st.form_submit_button(
             "Next: Review & Run →",
             type="primary",
-            use_container_width=True,
+            width='stretch',
         )
     if submitted:
         d["prioritize_read_across"] = prioritize_read_across
