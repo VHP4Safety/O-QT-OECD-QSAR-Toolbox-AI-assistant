@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import patch
 
 import pytest
@@ -50,6 +51,8 @@ def clear_llm_caches():
     llm_utils.analyze_experimental_data.cache_clear()
     llm_utils.analyze_read_across.cache_clear()
     llm_utils.synthesize_report.cache_clear()
+    os.environ.pop("OPENAI_API_KEY", None)
+    os.environ.pop("OPENAI_BASE_URL", None)
 
 
 @patch("oqt_assistant.utils.llm_utils.initialize_llm")

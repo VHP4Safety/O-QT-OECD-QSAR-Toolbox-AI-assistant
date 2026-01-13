@@ -48,7 +48,9 @@ def test_llm_configuration():
     """Test LLM configuration for different model types."""
     print("Testing LLM configuration...")
     
-    # Mock environment variables for testing
+    # Mock environment variables for testing (restore afterward to avoid leaking)
+    prev_api_key = os.environ.get("OPENAI_API_KEY")
+    prev_base_url = os.environ.get("OPENAI_BASE_URL")
     os.environ["OPENAI_API_KEY"] = "test-key-123"
     
     try:
@@ -100,6 +102,15 @@ def test_llm_configuration():
     except Exception as e:
         print(f"❌ Error during LLM configuration test: {e}")
         return False
+    finally:
+        if prev_api_key is None:
+            os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = prev_api_key
+        if prev_base_url is None:
+            os.environ.pop("OPENAI_BASE_URL", None)
+        else:
+            os.environ["OPENAI_BASE_URL"] = prev_base_url
     
     return True
 

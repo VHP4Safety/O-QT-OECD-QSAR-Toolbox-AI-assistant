@@ -1,4 +1,7 @@
+[![Tests](https://github.com/VHP4Safety/O-QT-OECD-QSAR-Toolbox-AI-assistant/actions/workflows/tests.yml/badge.svg)](https://github.com/VHP4Safety/O-QT-OECD-QSAR-Toolbox-AI-assistant/actions/workflows/tests.yml)
+[![DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.comtox.2025.100395-blue)](https://doi.org/10.1016/j.comtox.2025.100395)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17468969.svg)](https://doi.org/10.5281/zenodo.17468969)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
 # 🧪 O-QT: The OECD QSAR Toolbox AI Assistant
 
@@ -230,8 +233,10 @@ Outputs (JSON log, Markdown report, and PDF) are written to the directory passed
 
 ### Citation
 
-If you use the O-QT Assistant in academic or regulatory work, please cite the Zenodo record and manuscript under review:
+If you use the O-QT Assistant in academic or regulatory work, please cite the journal article and the Zenodo record:
 
+> I. Djidrovski, *O-QT assistant: A multi-agent AI system for streamlined chemical hazard assessment and read-across analysis using the OECD QSAR toolbox API*, Computational Toxicology (2025). DOI: [10.1016/j.comtox.2025.100395](https://doi.org/10.1016/j.comtox.2025.100395)
+>
 > I. Djidrovski, *O-QT Assistant: A Multi-Agent AI System for Streamlined Chemical Hazard Assessment and Read-Across Analysis using the OECD QSAR Toolbox API*, Zenodo (2025). DOI: [10.5281/zenodo.17468969](https://doi.org/10.5281/zenodo.17468969)
 
 The Zenodo archive mirrors the v1.0.0 GitHub release and includes all figures accompanying the paper.
@@ -265,11 +270,13 @@ oqt-assistant/
 
 ### Citation
 
-The scientific methodology, validation, and application of the O-QT Assistant are detailed in a manuscript currently under peer review.
+The scientific methodology, validation, and application of the O-QT Assistant are published in Computational Toxicology.
 
-Title: O’QT Assistant: A Multi-Agent AI System for Streamlined Chemical Hazard Assessment and Read-Across Analysis using the OECD QSAR Toolbox API
+Title: O-QT assistant: A multi-agent AI system for streamlined chemical hazard assessment and read-across analysis using the OECD QSAR toolbox API
 
-If you use this software in your research, we kindly ask that you check back for the full citation upon publication. For now, you can cite the repository directly.
+DOI: https://doi.org/10.1016/j.comtox.2025.100395
+
+If you use this software in your research, please cite the journal article and the Zenodo archive.
 
 ---
 

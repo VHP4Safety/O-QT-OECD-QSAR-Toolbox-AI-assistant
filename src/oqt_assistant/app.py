@@ -7,6 +7,7 @@ import sys
 import os
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
@@ -1560,12 +1561,19 @@ def render_standard_mode():
         qsar_catalog = st.session_state.get('available_qsar_models', [])
         if qsar_catalog:
             option_map = {}
+            search_map = {}
             for entry in qsar_catalog:
                 guid = entry.get("Guid")
                 if not guid:
                     continue
                 label = format_qsar_model_label(entry)
                 option_map[label] = guid
+                caption = entry.get("Caption") or entry.get("Name") or ""
+                raw_position = entry.get("RequestedPosition") or entry.get("Position") or ""
+                donor = entry.get("Donator") or ""
+                search_map[label] = " ".join(
+                    str(part) for part in (caption, raw_position, donor, guid) if part
+                ).lower()
 
             labels = list(option_map.keys())
             recommended_guids = st.session_state.get('recommended_qsar_model_guids', [])
@@ -1595,9 +1603,36 @@ def render_standard_mode():
                     st.session_state.qsar_selected_labels = []
                     st.rerun()
 
+                filter_text = st.text_input(
+                    "Filter QSAR models",
+                    key="qsar_filter_text",
+                    placeholder="Type to filter by name, category, donor, or GUID",
+                ).strip().lower()
+                st.caption("Tip: use multiple terms to narrow results (e.g., `acute fish`, `vega irfmn`).")
+                show_recommended_only = st.checkbox(
+                    "Show recommended only",
+                    key="qsar_filter_recommended_only",
+                    value=False,
+                )
+
+                filtered_labels = labels
+                if show_recommended_only:
+                    filtered_labels = [label for label in filtered_labels if label in recommended_labels]
+                filter_terms = [term for term in re.split(r"[\\s,;]+", filter_text) if term]
+                if filter_terms:
+                    filtered_labels = [
+                        label
+                        for label in filtered_labels
+                        if all(term in search_map.get(label, "") for term in filter_terms)
+                    ]
+
+                # Keep selected models visible even if they are filtered out.
+                visible_labels = list(dict.fromkeys(st.session_state.qsar_selected_labels + filtered_labels))
+                st.caption(f"Showing {len(filtered_labels)} of {len(labels)} models.")
+
                 selected_labels = st.multiselect(
                     "QSAR models",
-                    options=labels,
+                    options=visible_labels,
                     default=st.session_state.qsar_selected_labels,
                 )
                 st.session_state.qsar_selected_labels = selected_labels
@@ -1707,7 +1742,7 @@ def main():
 
     # Display the logo at the top of the sidebar
     if sidebar_logo:
-        st.sidebar.image(sidebar_logo, use_container_width=True)
+        st.sidebar.image(sidebar_logo, width='stretch')
 
     # Mode selection positioned directly under the logo
     # Determine index based on whether a wizard session is active
