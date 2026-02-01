@@ -280,6 +280,37 @@ If you use this software in your research, please cite the journal article and t
 
 ---
 
+## FAQ
+
+1. **What is O‑QT?**  
+   O‑QT is a multi‑agent assistant that connects to the OECD QSAR Toolbox WebAPI to help analyse chemicals, collect evidence (experimental/QSAR/profiling), and generate structured summary reports.
+
+2. **Do I need the OECD QSAR Toolbox installed?**  
+   Yes. O‑QT requires a running OECD QSAR Toolbox installation with the WebAPI enabled (Windows only).
+
+3. **Can I run O‑QT purely in Docker without QSAR Toolbox?**  
+   No. Docker can run the assistant app, but the OECD QSAR Toolbox itself must be installed separately and reachable via the WebAPI.
+
+4. **Why isn’t the OECD QSAR Toolbox included in this repository / Docker image?**  
+   The OECD QSAR Toolbox is distributed under its own End User License Agreement (EULA) which prohibits redistribution/bundling. O‑QT is only a client that communicates with the Toolbox WebAPI.
+
+5. **What do I need to configure to connect?**  
+   Set `QSAR_TOOLBOX_API_URL` to the Toolbox WebAPI endpoint (e.g. `http://<windows-host>:5001/api/v6.0`) and provide an LLM key (e.g. `OPENAI_API_KEY`, depending on your setup).
+
+6. **What inputs are supported for searching a chemical?**  
+   Typically chemical name, CAS, and SMILES (depending on the QSAR Toolbox content and the O‑QT UI/CLI options).
+
+7. **I can’t connect to the Toolbox API—what should I check first?**  
+   Confirm the Toolbox WebAPI is enabled and running, verify the host/port are reachable from your machine/container, and check firewall/network settings.
+
+8. **What data is sent to the LLM provider?**  
+   O‑QT sends prompt context needed to generate summaries from the retrieved evidence. Don’t include sensitive data unless you’re comfortable sending it to your configured provider.
+
+9. **How do I cite O‑QT?**  
+   Use the DOI listed below and on the VHP service page (and optionally the Zenodo software record if applicable).
+
+---
+
 ### Contributing
 
 We welcome contributions! Please see `CONTRIBUTING.md` for guidelines on coding standards, the pull request process, and testing.
