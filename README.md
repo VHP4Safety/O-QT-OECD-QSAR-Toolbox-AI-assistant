@@ -231,38 +231,6 @@ Key options:
 
 Outputs (JSON log, Markdown report, and PDF) are written to the directory passed via `--output-dir`.
 
-## ✅ Citation
-
-If you use the **O‑QT Assistant** in academic or regulatory work, please cite:
-
-**Journal article**
-
-Djidrovski, I. *O‑QT assistant: A multi-agent AI system for streamlined chemical hazard assessment and read-across analysis using the OECD QSAR toolbox API.* **Computational Toxicology** (2025). https://doi.org/10.1016/j.comtox.2025.100395
-
-```bibtex
-@article{djidrovski2025oqt,
-  title   = {O-QT assistant: A multi-agent AI system for streamlined chemical hazard assessment and read-across analysis using the OECD QSAR toolbox API},
-  author  = {Djidrovski, Ivo},
-  journal = {Computational Toxicology},
-  year    = {2025},
-  doi     = {10.1016/j.comtox.2025.100395},
-  url     = {https://doi.org/10.1016/j.comtox.2025.100395}
-}
-```
-
-**Software archive (Zenodo)**
-
-Djidrovski, I. *O‑QT Assistant: A Multi-Agent AI System for Streamlined Chemical Hazard Assessment and Read-Across Analysis using the OECD QSAR Toolbox API.* Zenodo (2025). https://doi.org/10.5281/zenodo.17468969
-
-```bibtex
-@software{djidrovski2025oqt_zenodo,
-  title  = {O-QT Assistant: A Multi-Agent AI System for Streamlined Chemical Hazard Assessment and Read-Across Analysis using the OECD QSAR Toolbox API},
-  author = {Djidrovski, Ivo},
-  year   = {2025},
-  doi    = {10.5281/zenodo.17468969},
-  url    = {https://doi.org/10.5281/zenodo.17468969}
-}
-```
 
 ### How to Use the Assistant
 
@@ -302,3 +270,38 @@ This project is licensed under the Apache License, Version 2.0. See the `LICENSE
 
 © 2025 Ivo Djidrovski — Utrecht University
 Contact: i.djidrovski@uu.nl
+
+---
+
+## ✅ Citation
+
+If you use the **O‑QT Assistant** in academic or regulatory work, please cite:
+
+**Journal article**
+
+Djidrovski, I. *O‑QT assistant: A multi-agent AI system for streamlined chemical hazard assessment and read-across analysis using the OECD QSAR toolbox API.* **Computational Toxicology** (2025). https://doi.org/10.1016/j.comtox.2025.100395
+
+```bibtex
+@article{djidrovski2025oqt,
+  title   = {O-QT assistant: A multi-agent AI system for streamlined chemical hazard assessment and read-across analysis using the OECD QSAR toolbox API},
+  author  = {Djidrovski, Ivo},
+  journal = {Computational Toxicology},
+  year    = {2025},
+  doi     = {10.1016/j.comtox.2025.100395},
+  url     = {https://doi.org/10.1016/j.comtox.2025.100395}
+}
+```
+
+**Software archive (Zenodo)**
+
+Djidrovski, I. *O‑QT Assistant: A Multi-Agent AI System for Streamlined Chemical Hazard Assessment and Read-Across Analysis using the OECD QSAR Toolbox API.* Zenodo (2025). https://doi.org/10.5281/zenodo.17468969
+
+```bibtex
+@software{djidrovski2025oqt_zenodo,
+  title  = {O-QT Assistant: A Multi-Agent AI System for Streamlined Chemical Hazard Assessment and Read-Across Analysis using the OECD QSAR Toolbox API},
+  author = {Djidrovski, Ivo},
+  year   = {2025},
+  doi    = {10.5281/zenodo.17468969},
+  url    = {https://doi.org/10.5281/zenodo.17468969}
+}
+```
